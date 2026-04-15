@@ -1,0 +1,27 @@
+ignore_paths:
+  - db/migrate/**
+  - vendor/**
+  - node_modules/**
+  - "*.lock"
+
+secret_patterns:
+  - 'api_key\s*=\s*["'\''].*["'\'']'
+  - 'SECRET_[A-Z_]+'
+
+secret_files:
+  - .env
+  - .env.*
+  - config/secrets.yml
+  - config/credentials/*.key
+
+review_instructions: |
+  Это Rails-проект. Обращай внимание на:
+  - N+1 запросы
+  - strong params
+  - отсутствие тестов для новой логики
+  Игнорируй стилистику — для этого есть линтеры.
+
+llm:
+  provider: gemini
+  model: gemini-2.5-flash
+  temperature: 0.2
