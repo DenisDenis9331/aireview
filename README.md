@@ -187,49 +187,6 @@ bundle _2.3.26_ exec rspec spec/config_spec.rb
 bundle _2.3.26_ exec rspec spec/secret_scrubber_spec.rb
 ```
 
-## Проверки на реальных MR
-
-Что удалось подтвердить вручную на боевых merge request'ах.
-
-### Несоответствия кода и постановки в Jira
-
-Нашёл ключи, которых нет в задаче [GOODS-5061](https://jira.railsc.ru/browse/GOODS-5061). Вывод: https://gitlab.railsc.ru/-/snippets/52
-
-```bash
-bundle _2.3.26_ exec bin/aireview review https://gitlab.railsc.ru/abak-press/spider/-/merge_requests/1074 --verbose
-```
-
-Поймал добавленный тестовый метод. Вывод: https://gitlab.railsc.ru/-/snippets/53
-
-```bash
-bundle _2.3.26_ exec bin/aireview review https://gitlab.railsc.ru/DenisDenis9331/spider/-/merge_requests/76 --verbose
-```
-
-### Поиск ошибок в коде
-
-Нашёл баг, который позже починили в [другом MR](https://gitlab.railsc.ru/abak-press/spider/-/merge_requests/1076/diffs#c77d49536a6d43fa2953c59b5e8757f084dbbe9e_33_32). Вывод: https://gitlab.railsc.ru/-/snippets/54
-
-```bash
-bundle _2.3.26_ exec bin/aireview review https://gitlab.railsc.ru/abak-press/spider/-/merge_requests/1071 --verbose
-```
-
-### Вырезание секретов перед отправкой в LLM
-
-Контекст, который реально уходит в нейронку: https://gitlab.railsc.ru/-/snippets/55
-
-```bash
-bundle _2.3.26_ exec bin/aireview review https://gitlab.railsc.ru/abak-press/spider/-/merge_requests/1078 --verbose --dry-run
-```
-
-Пример вырезанного секрета из вывода:
-
-```diff
-diff --git a/spec/fixtures/cassettes/openai_images_2_images_size_1024.yml b/spec/fixtures/cassettes/openai_images_2_images_size_1024.yml
---- a/spec/fixtures/cassettes/openai_images_2_images_size_1024.yml
-+++ b/spec/fixtures/cassettes/openai_images_2_images_size_1024.yml
-[REDACTED: secret file spec/fixtures/cassettes/openai_images_2_images_size_1024.yml]
-```
-
 ## Notes
 
 - CLI ищет `.aireview.yml` и `.env`, поднимаясь вверх от текущей рабочей директории, так что проектный конфиг можно держать в корне репозитория, даже когда инструмент запускается из `aireview/`.
