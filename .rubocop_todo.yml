@@ -1,0 +1,80 @@
+Gemspec/RequireMFA:
+  Exclude:
+    - 'aireview.gemspec'
+
+Layout/EndOfLine:
+  Exclude:
+    - 'Gemfile'
+
+Layout/FirstArrayElementIndentation:
+  EnforcedStyle: consistent
+
+Layout/LineEndStringConcatenationIndentation:
+  Exclude:
+    - 'lib/aireview/reviewer.rb'
+
+Metrics/AbcSize:
+  Max: 61
+
+Metrics/BlockLength:
+  Max: 35
+
+Metrics/ClassLength:
+  Max: 360
+
+Metrics/CyclomaticComplexity:
+  Max: 17
+
+Metrics/MethodLength:
+  Max: 59
+
+Metrics/PerceivedComplexity:
+  Max: 17
+
+Naming/RescuedExceptionsVariableName:
+  Exclude:
+    - 'lib/aireview/review_pipeline.rb'
+
+Style/CollectionCompact:
+  Exclude:
+    - 'lib/aireview/config.rb'
+
+Style/EmptyClassDefinition:
+  Exclude:
+    - 'lib/aireview/review_pipeline.rb'
+
+Style/EmptyStringInsideInterpolation:
+  Exclude:
+    - 'lib/aireview/mr_parser.rb'
+
+Style/FrozenStringLiteralComment:
+  Enabled: false
+
+Style/IfUnlessModifier:
+  Exclude:
+    - 'lib/aireview/context_builder.rb'
+    - 'lib/aireview/review_pipeline.rb'
+
+Style/RedundantFreeze:
+  Exclude:
+    - 'lib/aireview/jira_client.rb'
+    - 'lib/aireview/mr_parser.rb'
+
+Style/RedundantInterpolationUnfreeze:
+  Exclude:
+    - 'lib/aireview/context_builder.rb'
+
+Style/RegexpLiteral:
+  Exclude:
+    - 'lib/aireview/secret_scrubber.rb'
+
+Style/SelectByKind:
+  Exclude:
+    - 'lib/aireview/review_pipeline.rb'
+
+Style/StringLiterals:
+  Exclude:
+    - 'lib/aireview/reviewer.rb'
+
+Layout/LineLength:
+  Max: 199
