@@ -6,6 +6,7 @@ gem 'dotenv', '~> 3.1'
 gem 'faraday', '~> 2.14'
 gem 'ruby_llm', '1.15.0'
 
-group :test do
+group :development, :test do
   gem 'rspec', '~> 3.13'
+  gem 'rubocop', '~> 1.75', require: false
 end
