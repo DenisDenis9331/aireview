@@ -42,6 +42,8 @@ RSpec.describe Aireview::Config do
         expect(config.review_language).to eq('en')
         expect(config.ignore_paths).to eq(['vendor/**'])
         expect(config.llm_provider).to eq('gemini')
+        expect(config.generate_provider).to eq('gemini')
+        expect(config.critique_provider).to eq('gemini')
         expect(config.generate_model).to eq('gemini-2.5-pro')
         expect(config.critique_model).to eq('gemini-2.5-flash')
         expect(config.generate_temperature).to eq(0.3)
@@ -90,18 +92,42 @@ RSpec.describe Aireview::Config do
         config = described_class.load(
           cwd: dir,
           env: {
+            'LLM_GENERATE_PROVIDER' => 'gemini',
+            'LLM_CRITIQUE_PROVIDER' => 'ollama',
             'LLM_GENERATE_MODEL' => 'gemini-2.5-pro',
-            'LLM_CRITIQUE_MODEL' => 'gemini-2.5-flash-lite',
+            'LLM_CRITIQUE_MODEL' => 'qwen2.5-coder:7b',
             'LLM_GENERATE_TEMPERATURE' => '0.3',
             'LLM_CRITIQUE_TEMPERATURE' => '0'
           },
           logger: Logger.new(nil)
         )
 
+        expect(config.generate_provider).to eq('gemini')
+        expect(config.critique_provider).to eq('ollama')
         expect(config.generate_model).to eq('gemini-2.5-pro')
-        expect(config.critique_model).to eq('gemini-2.5-flash-lite')
+        expect(config.critique_model).to eq('qwen2.5-coder:7b')
         expect(config.generate_temperature).to eq(0.3)
         expect(config.critique_temperature).to eq(0)
+      end
+    end
+
+    it 'loads a custom Ollama API base from environment' do
+      Dir.mktmpdir do |dir|
+        config = described_class.load(
+          cwd: dir,
+          env: { 'OLLAMA_API_BASE' => 'http://ollama:11434/v1' },
+          logger: Logger.new(nil)
+        )
+
+        expect(config.ollama_api_base).to eq('http://ollama:11434/v1')
+      end
+    end
+
+    it 'uses the local Ollama API base by default' do
+      Dir.mktmpdir do |dir|
+        config = described_class.load(cwd: dir, env: {}, logger: Logger.new(nil))
+
+        expect(config.ollama_api_base).to eq('http://localhost:11434/v1')
       end
     end
 
@@ -187,6 +213,60 @@ RSpec.describe Aireview::Config do
         expect { config.require_models! }.not_to raise_error
         expect { config.require_llm_configuration! }
           .to raise_error(Aireview::ConfigError, /API key/)
+      end
+    end
+
+    it 'does not require API keys for Ollama stages' do
+      Dir.mktmpdir do |dir|
+        config = described_class.load(
+          cwd: dir,
+          env: {
+            'LLM_GENERATE_PROVIDER' => 'ollama',
+            'LLM_GENERATE_MODEL' => 'qwen2.5-coder:7b',
+            'LLM_CRITIQUE_PROVIDER' => 'ollama',
+            'LLM_CRITIQUE_MODEL' => 'qwen2.5-coder:7b'
+          },
+          logger: Logger.new(nil)
+        )
+
+        expect { config.require_llm_configuration! }.not_to raise_error
+      end
+    end
+
+    it 'validates API keys for generate and critique providers separately' do
+      Dir.mktmpdir do |dir|
+        config = described_class.load(
+          cwd: dir,
+          env: {
+            'LLM_GENERATE_PROVIDER' => 'gemini',
+            'LLM_GENERATE_MODEL' => 'gemini-2.5-pro',
+            'GEMINI_API_KEY' => 'gemini-secret',
+            'LLM_CRITIQUE_PROVIDER' => 'anthropic',
+            'LLM_CRITIQUE_MODEL' => 'claude-sonnet-4'
+          },
+          logger: Logger.new(nil)
+        )
+
+        expect { config.require_llm_configuration! }
+          .to raise_error(Aireview::ConfigError, /critique.*anthropic/)
+      end
+    end
+
+    it 'requires a key only for the remote stage in a mixed configuration' do
+      Dir.mktmpdir do |dir|
+        config = described_class.load(
+          cwd: dir,
+          env: {
+            'LLM_GENERATE_PROVIDER' => 'ollama',
+            'LLM_GENERATE_MODEL' => 'qwen2.5-coder:7b',
+            'LLM_CRITIQUE_PROVIDER' => 'gemini',
+            'LLM_CRITIQUE_MODEL' => 'gemini-2.5-flash'
+          },
+          logger: Logger.new(nil)
+        )
+
+        expect { config.require_llm_configuration! }
+          .to raise_error(Aireview::ConfigError, /critique.*gemini/)
       end
     end
 
