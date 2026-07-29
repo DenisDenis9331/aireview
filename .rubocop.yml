@@ -3,6 +3,7 @@ AllCops:
   Exclude:
     - db/schema.rb
     - 'spec/**/*'
+    - 'vendor/**/*'
 
 Naming/FileName:
   Enabled: false

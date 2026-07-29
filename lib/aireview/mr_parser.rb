@@ -1,10 +1,11 @@
+# frozen_string_literal: true
 require 'uri'
 
 module Aireview
   class MrParser
     Result = Struct.new(:url, :base_url, :project_path, :project_id, :iid, keyword_init: true)
 
-    MR_PATH = %r{\A/(?<project>.+)/-/merge_requests/(?<iid>\d+)\z}.freeze
+    MR_PATH = %r{\A/(?<project>.+)/-/merge_requests/(?<iid>\d+)\z}
 
     def self.parse(url)
       uri = URI.parse(url.to_s)
@@ -17,7 +18,7 @@ module Aireview
 
       Result.new(
         url: url,
-        base_url: "#{uri.scheme}://#{uri.host}#{uri.port && ![80, 443].include?(uri.port) ? ":#{uri.port}" : nil}",
+        base_url: "#{uri.scheme}://#{uri.host}#{":#{uri.port}" if uri.port && ![80, 443].include?(uri.port)}",
         project_path: project_path,
         project_id: URI.encode_www_form_component(project_path),
         iid: match[:iid].to_i

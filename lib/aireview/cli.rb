@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require 'securerandom'
 
 module Aireview
@@ -40,6 +41,14 @@ module Aireview
     private
 
     def run_review(argv)
+      options, mr_url = review_options_and_url(argv)
+      config = load_review_config(options)
+      context = load_review_context(mr_url, config, options)
+
+      execute_review(config, context, options)
+    end
+
+    def review_options_and_url(argv)
       options = parse_review_options(argv)
       @logger.level = Logger::DEBUG if options[:verbose]
 
@@ -48,8 +57,10 @@ module Aireview
       raise ParseError, "Unexpected arguments: #{argv.join(' ')}" unless argv.empty?
 
       @logger.info("Starting review command for #{mr_url}")
+      [options, mr_url]
+    end
 
-      parser_result = MrParser.parse(mr_url)
+    def load_review_config(options)
       config = Config.load(config_path: options[:config], cwd: Dir.pwd, env: ENV, logger: @logger)
       config = config.with_overrides(
         generate_model: options[:generate_model],
@@ -58,17 +69,39 @@ module Aireview
         critique_temperature: options[:critique_temperature]
       )
       config.require_llm_configuration!
+      config
+    end
 
-      gitlab_client = GitlabClient.new(
+    def load_review_context(mr_url, config, options)
+      parser_result = MrParser.parse(mr_url)
+      gitlab_client = build_gitlab_client(config, parser_result)
+      merge_request, changes = fetch_merge_request_data(gitlab_client, parser_result)
+
+      {
+        parser_result: parser_result,
+        gitlab_client: gitlab_client,
+        merge_request: merge_request,
+        changes_text: render_changes(changes, config),
+        jira_issue: maybe_load_jira_issue(config, merge_request, options)
+      }
+    end
+
+    def build_gitlab_client(config, parser_result)
+      GitlabClient.new(
         base_url: config.gitlab_url || parser_result.base_url,
         token: config.require_gitlab_token!,
         logger: @logger
       )
+    end
 
+    def fetch_merge_request_data(gitlab_client, parser_result)
       @logger.info("Loading MR #{parser_result.project_path}!#{parser_result.iid}")
       merge_request = gitlab_client.fetch_merge_request(parser_result.project_id, parser_result.iid)
       changes = gitlab_client.fetch_merge_request_changes(parser_result.project_id, parser_result.iid)
+      [merge_request, changes]
+    end
 
+    def render_changes(changes, config)
       diff_fetcher = DiffFetcher.new(ignore_paths: config.ignore_paths, logger: @logger)
       filtered_changes = diff_fetcher.filter(changes)
       raise Error, 'No changes left after filtering ignore_paths' if filtered_changes.empty?
@@ -79,16 +112,17 @@ module Aireview
         logger: @logger
       ).scrub_changes(filtered_changes)
 
-      rendered_changes = diff_fetcher.render(scrubbed_changes)
-      jira_issue = maybe_load_jira_issue(config, merge_request, options)
+      diff_fetcher.render(scrubbed_changes)
+    end
 
+    def execute_review(config, context, options)
       pipeline = ReviewPipeline.new(config: config, logger: @logger)
 
       if options[:dry_run]
         dry_run = pipeline.dry_run_prompts(
-          merge_request: merge_request,
-          changes_text: rendered_changes,
-          jira_issue: jira_issue,
+          merge_request: context[:merge_request],
+          changes_text: context[:changes_text],
+          jira_issue: context[:jira_issue],
           critique: !options[:no_critique]
         )
         render_dry_run(dry_run)
@@ -96,22 +130,24 @@ module Aireview
       end
 
       review = pipeline.run(
-        merge_request: merge_request,
-        changes_text: rendered_changes,
-        jira_issue: jira_issue,
+        merge_request: context[:merge_request],
+        changes_text: context[:changes_text],
+        jira_issue: context[:jira_issue],
         critique: !options[:no_critique]
       )
 
-      if options[:post]
-        Publisher.new(gitlab_client: gitlab_client, logger: @logger).publish(
-          project_id: parser_result.project_id,
-          iid: parser_result.iid,
-          review_body: review
-        )
-      end
+      publish_review(review, context) if options[:post]
 
       @out.puts(review)
       0
+    end
+
+    def publish_review(review, context)
+      Publisher.new(gitlab_client: context[:gitlab_client], logger: @logger).publish(
+        project_id: context[:parser_result].project_id,
+        iid: context[:parser_result].iid,
+        review_body: review
+      )
     end
 
     def maybe_load_jira_issue(config, merge_request, options)

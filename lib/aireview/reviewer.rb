@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative 'errors'
 require_relative 'utils'
 require 'timeout'
@@ -9,6 +10,8 @@ module Aireview
     TRANSIENT_RETRY_JITTER_RANGE = 2.0..5.0
     PROVIDER_RETRY_DELAY_MULTIPLIER_RANGE = 2.0..2.4
     OVERLOADED_RETRY_DELAY_RANGE = 90.0..150.0
+    RETRY_WAIT_LOG_FORMAT = 'LLM %<stage>s request will sleep %<delay>.1fs before retry%<source>s ' \
+                            '(attempt %<next_attempt>d/%<max_attempts>d, model=%<model>s)'
 
     def initialize(config:, logger: Logger.new($stderr))
       @config = config
@@ -43,51 +46,16 @@ module Aireview
 
       @config.require_llm_configuration!
       configure_ruby_llm
-
-      attempt = 0
-
-      begin
-        attempt += 1
-        @logger.info("LLM #{stage} request started (model=#{model}, temperature=#{temperature})")
-        chat = RubyLLM.chat(model: model).with_temperature(temperature.to_f)
-        chat.with_instructions(system)
-        response = Timeout.timeout(@config.llm_timeout.to_f) { chat.ask(user) }
-        @logger.info("LLM #{stage} request completed (model=#{model})")
-        response.content
-      rescue StandardError => e
-        raise unless ruby_llm_api_error?(e)
-
-        @logger.warn("LLM #{stage} request failed (model=#{model}): #{e.class}: #{e.message}")
-
-        if transient_llm_error?(e) && attempt <= MAX_TRANSIENT_RETRIES
-          retry_delay = transient_retry_delay(error: e, attempt: attempt)
-          @logger.warn(
-            format(
-              'LLM %<stage>s request will sleep %<delay>.1fs before retry%<source>s (attempt %<next_attempt>d/%<max_attempts>d, model=%<model>s)',
-              stage: stage,
-              delay: retry_delay[:delay],
-              source: retry_delay_source(retry_delay),
-              next_attempt: attempt + 1,
-              max_attempts: MAX_TRANSIENT_RETRIES + 1,
-              model: model
-            )
-          )
-          sleep_started_at = monotonic_time
-          sleep(retry_delay[:delay])
-          waited = monotonic_time - sleep_started_at
-          @logger.info(
-            format(
-              'LLM %<stage>s retry wait completed after %<waited>.1fs (model=%<model>s)',
-              stage: stage,
-              waited: waited,
-              model: model
-            )
-          )
-          retry
-        end
-
-        raise ApiError, llm_error_message(e)
+      response = request_with_retries(stage: stage, model: model) do
+        perform_llm_request(
+          stage: stage,
+          system: system,
+          user: user,
+          model: model,
+          temperature: temperature
+        )
       end
+      response.content
     rescue LoadError => e
       @logger.error("LLM #{stage} setup failed: #{e.message}")
       raise ConfigError, "Missing dependency: #{e.message}"
@@ -95,6 +63,65 @@ module Aireview
       @logger.warn("LLM #{stage} request timed out after #{@config.llm_timeout} seconds (model=#{model})")
       raise ApiError, "LLM request timed out after #{@config.llm_timeout} seconds. " \
                       "Try again later or switch model via --generate-model/--critique-model."
+    end
+
+    def perform_llm_request(stage:, system:, user:, model:, temperature:)
+      @logger.info("LLM #{stage} request started (model=#{model}, temperature=#{temperature})")
+      chat = RubyLLM.chat(model: model).with_temperature(temperature.to_f)
+      chat.with_instructions(system)
+      response = Timeout.timeout(@config.llm_timeout.to_f) { chat.ask(user) }
+      @logger.info("LLM #{stage} request completed (model=#{model})")
+      response
+    end
+
+    def request_with_retries(stage:, model:)
+      attempt = 0
+
+      begin
+        attempt += 1
+        yield
+      rescue StandardError => e
+        raise unless ruby_llm_api_error?(e)
+
+        @logger.warn("LLM #{stage} request failed (model=#{model}): #{e.class}: #{e.message}")
+        raise ApiError, llm_error_message(e) unless retry_llm_request?(e, attempt)
+
+        wait_before_retry(error: e, attempt: attempt, stage: stage, model: model)
+        retry
+      end
+    end
+
+    def retry_llm_request?(error, attempt)
+      transient_llm_error?(error) && attempt <= MAX_TRANSIENT_RETRIES
+    end
+
+    def wait_before_retry(error:, attempt:, stage:, model:)
+      retry_delay = transient_retry_delay(error: error, attempt: attempt)
+      @logger.warn(
+        format(
+          RETRY_WAIT_LOG_FORMAT,
+          stage: stage,
+          delay: retry_delay[:delay],
+          source: retry_delay_source(retry_delay),
+          next_attempt: attempt + 1,
+          max_attempts: MAX_TRANSIENT_RETRIES + 1,
+          model: model
+        )
+      )
+      sleep_started_at = monotonic_time
+      sleep(retry_delay[:delay])
+      log_retry_wait_completed(stage, model, monotonic_time - sleep_started_at)
+    end
+
+    def log_retry_wait_completed(stage, model, waited)
+      @logger.info(
+        format(
+          'LLM %<stage>s retry wait completed after %<waited>.1fs (model=%<model>s)',
+          stage: stage,
+          waited: waited,
+          model: model
+        )
+      )
     end
 
     def ruby_llm_api_error?(error)
@@ -166,10 +193,10 @@ module Aireview
       case error
       when RubyLLM::ServiceUnavailableError, RubyLLM::OverloadedError
         "LLM service is temporarily unavailable or overloaded: #{error.message}. " \
-          "Try again later or switch model via --generate-model/--critique-model."
+        "Try again later or switch model via --generate-model/--critique-model."
       when RubyLLM::RateLimitError
         "LLM rate limit exceeded: #{error.message}. " \
-          "Try again later or switch model via --generate-model/--critique-model."
+        "Try again later or switch model via --generate-model/--critique-model."
       when RubyLLM::ContextLengthExceededError
         "LLM context limit exceeded: #{error.message}. Try reducing the MR diff or ignore more paths."
       else
@@ -183,31 +210,44 @@ module Aireview
       provider = @config.llm_provider.to_s
       api_key = @config.provider_api_key(provider)
 
-      RubyLLM.configure do |config|
-        config.http_proxy = @config.llm_http_proxy if Aireview::Utils.present?(@config.llm_http_proxy)
-
-        case provider
-        when 'gemini'
-          config.gemini_api_key = api_key
-          config.gemini_api_base = @config.llm_api_base if Aireview::Utils.present?(@config.llm_api_base)
-        when 'openai'
-          config.openai_api_key = api_key
-          config.openai_api_base = @config.llm_api_base if Aireview::Utils.present?(@config.llm_api_base)
-        when 'openrouter'
-          config.openrouter_api_key = api_key
-          config.openrouter_api_base = @config.llm_api_base if Aireview::Utils.present?(@config.llm_api_base)
-        when 'anthropic'
-          config.anthropic_api_key = api_key
-        when 'ollama'
-          config.openai_api_key = api_key || 'ollama'
-          config.openai_api_base = @config.llm_api_base || 'http://localhost:11434/v1'
-          config.openai_use_system_role = true
-        else
-          raise ConfigError, "Unsupported LLM provider: #{provider.inspect}"
-        end
+      RubyLLM.configure do |ruby_config|
+        configure_http_proxy(ruby_config)
+        configure_provider(ruby_config, provider, api_key)
       end
 
       @ruby_llm_configured = true
+    end
+
+    def configure_http_proxy(ruby_config)
+      return unless Aireview::Utils.present?(@config.llm_http_proxy)
+
+      ruby_config.http_proxy = @config.llm_http_proxy
+    end
+
+    def configure_provider(ruby_config, provider, api_key)
+      case provider
+      when 'gemini', 'openai', 'openrouter'
+        configure_remote_provider(ruby_config, provider, api_key)
+      when 'anthropic'
+        ruby_config.anthropic_api_key = api_key
+      when 'ollama'
+        configure_ollama(ruby_config, api_key)
+      else
+        raise ConfigError, "Unsupported LLM provider: #{provider.inspect}"
+      end
+    end
+
+    def configure_remote_provider(ruby_config, provider, api_key)
+      ruby_config.public_send("#{provider}_api_key=", api_key)
+      return unless Aireview::Utils.present?(@config.llm_api_base)
+
+      ruby_config.public_send("#{provider}_api_base=", @config.llm_api_base)
+    end
+
+    def configure_ollama(ruby_config, api_key)
+      ruby_config.openai_api_key = api_key || 'ollama'
+      ruby_config.openai_api_base = @config.llm_api_base || 'http://localhost:11434/v1'
+      ruby_config.openai_use_system_role = true
     end
   end
 end

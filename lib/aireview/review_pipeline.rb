@@ -1,29 +1,15 @@
+# frozen_string_literal: true
 require 'json'
 require_relative 'errors'
 require_relative 'context_builder'
+require_relative 'review_renderer'
+require_relative 'review_schemas'
 require_relative 'reviewer'
 
 module Aireview
   class ReviewPipeline
-    SchemaError = Class.new(StandardError)
-
-    MISMATCH_LIMIT = 2
-    IMPORTANT_LIMIT = 3
-    TOTAL_FINDINGS_LIMIT = 3
-    IMPORTANT_CATEGORIES = %w[
-      bug
-      regression
-      security
-      performance
-      data_loss
-      edge_case
-    ].freeze
-
-    SEVERITY_ORDER = {
-      'critical' => 0,
-      'major' => 1,
-      'minor' => 2
-    }.freeze
+    class SchemaError < StandardError
+    end
 
     REPAIR_SYSTEM_PROMPT = <<~PROMPT.strip.freeze
       You fix invalid JSON produced by another LLM call.
@@ -31,6 +17,9 @@ module Aireview
       Do not use markdown, code fences, comments, or text outside JSON.
       Do not add new review findings.
     PROMPT
+    DRY_RUN_CANDIDATES_JSON = '[{"id":"C1","file":"path/from/diff.rb","line":1,' \
+                              '"quoted_code":"...","problem":"...","why":"...","suggestion":"...",' \
+                              '"category":"bug","severity":"major"}]'
 
     def initialize(config:, reviewer: nil, context_builder: nil, logger: Logger.new($stderr))
       @config = config
@@ -72,7 +61,7 @@ module Aireview
 
       @logger.info("Pipeline finished with #{accepted.size} accepted finding(s)")
 
-      render_markdown(accepted, summary: summary)
+      ReviewRenderer.new.render(accepted, summary: summary)
     end
 
     def dry_run_prompts(merge_request:, changes_text:, jira_issue: nil, critique: true)
@@ -89,7 +78,7 @@ module Aireview
                             merge_request: merge_request,
                             changes_text: changes_text,
                             jira_issue: jira_issue,
-                            candidates_json: '[{"id":"C1","file":"path/from/diff.rb","line":1,"quoted_code":"...","problem":"...","why":"...","suggestion":"...","category":"bug","severity":"major"}]'
+                            candidates_json: DRY_RUN_CANDIDATES_JSON
                           )
                         end
 
@@ -132,8 +121,8 @@ module Aireview
 
     def parse_with_repair(raw:, kind:, expected:, repair_stage:, critique_candidate_ids: nil)
       parse_expected_json(raw, expected, critique_candidate_ids: critique_candidate_ids)
-    rescue JSON::ParserError, SchemaError => first_error
-      @logger.warn("Invalid #{kind} JSON, requesting one repair: #{first_error.message}")
+    rescue JSON::ParserError, SchemaError => e
+      @logger.warn("Invalid #{kind} JSON, requesting one repair: #{e.message}")
       repaired = repair_json(
         raw: raw,
         kind: kind,
@@ -174,65 +163,83 @@ module Aireview
     end
 
     def normalize_generate_result(parsed)
-      parsed = { 'summary' => nil, 'candidates' => parsed } if parsed.is_a?(Array)
-
-      unless parsed.is_a?(Hash) && parsed['candidates'].is_a?(Array)
-        raise SchemaError, 'expected an object with summary and candidates array'
-      end
-
+      parsed = {'summary' => nil, 'candidates' => parsed} if parsed.is_a?(Array)
+      validate_generate_result_shape!(parsed)
       parsed['summary'] = nil unless parsed.key?('summary')
       candidate_ids = parsed['candidates'].map { |candidate| normalize_id(value(candidate, 'id')) }
-
-      unless candidate_ids.all?
-        raise SchemaError, 'each generate candidate must include a non-empty id'
-      end
-
-      duplicate_ids = candidate_ids.group_by(&:itself).select { |_, ids| ids.size > 1 }.keys
-      raise SchemaError, "duplicate generate candidate ids: #{duplicate_ids.join(', ')}" unless duplicate_ids.empty?
+      validate_identifiers!(
+        candidate_ids,
+        missing_message: 'each generate candidate must include a non-empty id',
+        duplicate_prefix: 'duplicate generate candidate ids'
+      )
 
       parsed
     end
 
     def normalize_critique_result(parsed, critique_candidate_ids:)
-      unless parsed.is_a?(Hash) && parsed['verdicts'].is_a?(Array)
-        raise SchemaError, 'expected an object with verdicts array'
-      end
-
+      validate_critique_result_shape!(parsed)
       verdicts = parsed['verdicts']
       verdict_ids = verdicts.map { |verdict| normalize_id(value(verdict, 'id')) }
-      raise SchemaError, 'each verdict must include a non-empty id' unless verdict_ids.all?
-
-      duplicate_ids = verdict_ids.group_by(&:itself).select { |_, ids| ids.size > 1 }.keys
-      raise SchemaError, "duplicate verdict ids: #{duplicate_ids.join(', ')}" unless duplicate_ids.empty?
-
-      if critique_candidate_ids
-        unknown_ids = verdict_ids - critique_candidate_ids
-        missing_ids = critique_candidate_ids - verdict_ids
-        raise SchemaError, "unknown verdict ids: #{unknown_ids.join(', ')}" unless unknown_ids.empty?
-        raise SchemaError, "missing verdict ids: #{missing_ids.join(', ')}" unless missing_ids.empty?
-      end
-
-      verdicts.each do |verdict|
-        id = normalize_id(value(verdict, 'id'))
-        decision = normalize_decision(value(verdict, 'decision'))
-        raise SchemaError, "invalid verdict decision for #{id}" unless %w[keep reject].include?(decision)
-
-        refinement = value(verdict, 'refinement')
-
-        if refinement_key?(verdict) && decision != 'keep'
-          raise SchemaError, "reject verdict cannot include refinement for #{id}"
-        end
-
-        next if refinement.nil?
-
-        raise SchemaError, "refinement must be an object for #{id}" unless refinement.is_a?(Hash)
-      end
+      validate_identifiers!(
+        verdict_ids,
+        missing_message: 'each verdict must include a non-empty id',
+        duplicate_prefix: 'duplicate verdict ids'
+      )
+      validate_expected_verdict_ids!(verdict_ids, critique_candidate_ids)
+      verdicts.each { |verdict| validate_verdict!(verdict) }
 
       parsed
     end
 
+    def validate_generate_result_shape!(parsed)
+      return if parsed.is_a?(Hash) && parsed['candidates'].is_a?(Array)
+
+      raise SchemaError, 'expected an object with summary and candidates array'
+    end
+
+    def validate_critique_result_shape!(parsed)
+      return if parsed.is_a?(Hash) && parsed['verdicts'].is_a?(Array)
+
+      raise SchemaError, 'expected an object with verdicts array'
+    end
+
+    def validate_identifiers!(identifiers, missing_message:, duplicate_prefix:)
+      raise SchemaError, missing_message unless identifiers.all?
+
+      duplicate_ids = identifiers.group_by(&:itself).select { |_, ids| ids.size > 1 }.keys
+      return if duplicate_ids.empty?
+
+      raise SchemaError, "#{duplicate_prefix}: #{duplicate_ids.join(', ')}"
+    end
+
+    def validate_expected_verdict_ids!(verdict_ids, expected_ids)
+      return unless expected_ids
+
+      unknown_ids = verdict_ids - expected_ids
+      missing_ids = expected_ids - verdict_ids
+      raise SchemaError, "unknown verdict ids: #{unknown_ids.join(', ')}" unless unknown_ids.empty?
+      raise SchemaError, "missing verdict ids: #{missing_ids.join(', ')}" unless missing_ids.empty?
+    end
+
+    def validate_verdict!(verdict)
+      id = normalize_id(value(verdict, 'id'))
+      decision = normalize_decision(value(verdict, 'decision'))
+      raise SchemaError, "invalid verdict decision for #{id}" unless %w[keep reject].include?(decision)
+
+      refinement = value(verdict, 'refinement')
+      raise SchemaError, "reject verdict cannot include refinement for #{id}" if invalid_refinement?(verdict, decision)
+      return if refinement.nil?
+      return if refinement.is_a?(Hash)
+
+      raise SchemaError, "refinement must be an object for #{id}"
+    end
+
+    def invalid_refinement?(verdict, decision)
+      refinement_key?(verdict) && decision != 'keep'
+    end
+
     def repair_json(raw:, kind:, expected:, stage:, critique_candidate_ids: nil)
-      schema = expected == :critique ? critique_schema_description : generate_schema_description
+      schema = expected == :critique ? ReviewSchemas.critique : ReviewSchemas.generate
       user_prompt = <<~PROMPT
         The previous #{kind} response was invalid.
 
@@ -255,53 +262,6 @@ module Aireview
       else
         @reviewer.generate(system_prompt: REPAIR_SYSTEM_PROMPT, user_prompt: user_prompt)
       end
-    end
-
-    def generate_schema_description
-      <<~SCHEMA.strip
-        {
-          "summary": "1-2 предложения о сути изменений в MR",
-          "candidates": [
-            {
-              "id": "C1",
-              "file": "path/from/diff.rb",
-              "line": 42,
-              "quoted_code": "изменённый фрагмент кода",
-              "problem": "текст замечания",
-              "why": "почему это важно",
-              "suggestion": "что исправить или проверить",
-              "category": "bug",
-              "severity": "major"
-            }
-          ]
-        }
-      SCHEMA
-    end
-
-    def critique_schema_description
-      <<~SCHEMA.strip
-        {
-          "verdicts": [
-            {
-              "id": "C1",
-              "decision": "keep",
-              "reason": "почему замечание подтверждено",
-              "refinement": {
-                "problem": "уточнённый текст замечания",
-                "why": "почему это действительно проблема",
-                "suggestion": "что исправить или проверить",
-                "category": "bug",
-                "severity": "major"
-              }
-            },
-            {
-              "id": "C2",
-              "decision": "reject",
-              "reason": "почему замечание отклонено"
-            }
-          ]
-        }
-      SCHEMA
     end
 
     def index_candidates_by_id(candidates)
@@ -362,72 +322,6 @@ module Aireview
       " (#{changes.join(', ')})"
     end
 
-    def render_markdown(accepted, summary:)
-      findings = sorted_findings(Array(accepted)).first(TOTAL_FINDINGS_LIMIT)
-      mismatches = findings.select { |finding| category(finding) == 'task_mismatch' }.first(MISMATCH_LIMIT)
-      important = findings.select { |finding| important_finding?(finding) }.first(IMPORTANT_LIMIT)
-      result = mismatches.empty? && important.empty? ? 'ok' : 'needs attention'
-
-      <<~MARKDOWN.rstrip
-        ## Сводка
-
-        #{summary_text(summary)}
-
-        ## Несоответствия
-
-        #{render_findings(mismatches)}
-
-        ## Важные замечания
-
-        #{render_findings(important)}
-
-        ## Результат
-
-        #{result}
-
-        Отчёт сгенерирован ИИ и может содержать ошибки. Проверьте замечания вручную перед принятием решений.
-      MARKDOWN
-    end
-
-    def sorted_findings(findings)
-      findings
-        .select { |finding| finding.is_a?(Hash) }
-        .sort_by { |finding| [SEVERITY_ORDER.fetch(severity(finding), 99), value(finding, 'id').to_s] }
-    end
-
-    def important_finding?(finding)
-      return false if category(finding) == 'task_mismatch'
-      return false if severity(finding) == 'minor'
-
-      IMPORTANT_CATEGORIES.include?(category(finding))
-    end
-
-    def summary_text(summary)
-      presence(summary) || 'Сводка изменений не была возвращена на первом проходе.'
-    end
-
-    def render_findings(findings)
-      return 'Не найдено.' if findings.empty?
-
-      findings.map do |finding|
-        <<~ITEM.rstrip
-          - **Где**: #{location(finding)}
-          - **Проблема**: #{presence(value(finding, 'problem')) || 'Не указано.'}
-          - **Почему важно**: #{presence(value(finding, 'why')) || 'Не указано.'}
-          - **Предложение**: #{presence(value(finding, 'suggestion')) || 'Не указано.'}
-        ITEM
-      end.join("\n\n")
-    end
-
-    def location(finding)
-      file = presence(value(finding, 'file'))
-      line = value(finding, 'line')
-      return 'Не указано.' unless file
-      return file if line.nil? || line.to_s.empty?
-
-      "#{file}:#{line}"
-    end
-
     def value(hash, key)
       hash[key] || hash[key.to_sym]
     end
@@ -442,14 +336,6 @@ module Aireview
 
     def refinement_key?(verdict)
       verdict.key?('refinement') || verdict.key?(:refinement)
-    end
-
-    def category(finding)
-      value(finding, 'category').to_s.downcase
-    end
-
-    def severity(finding)
-      value(finding, 'severity').to_s.downcase
     end
 
     def presence(value)

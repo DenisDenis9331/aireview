@@ -1,10 +1,11 @@
+# frozen_string_literal: true
 require 'base64'
 require 'json'
 require_relative 'utils'
 
 module Aireview
   class JiraClient
-    ISSUE_KEY = /\b([A-Z][A-Z0-9]+-\d+)\b/.freeze
+    ISSUE_KEY = /\b([A-Z][A-Z0-9]+-\d+)\b/
     OPEN_TIMEOUT = 10
     READ_TIMEOUT = 30
 

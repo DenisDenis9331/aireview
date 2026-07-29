@@ -1,8 +1,9 @@
+# frozen_string_literal: true
 require_relative 'utils'
 
 module Aireview
   class SecretScrubber
-    REDACTED = '[REDACTED]'.freeze
+    REDACTED = '[REDACTED]'
 
     BUILTIN_RULES = [
       [/-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----/m, REDACTED],
@@ -12,7 +13,8 @@ module Aireview
       [/(Authorization:\s*Bearer\s+)[A-Za-z0-9._-]+/i, '\1[REDACTED]'],
       [/(Bearer\s+)[A-Za-z0-9._-]{20,}/i, '\1[REDACTED]'],
       [/(\baws_secret_access_key\b\s*[:=]\s*["']?)[A-Za-z0-9\/+=]{20,}(["']?)/i, '\1[REDACTED]\2'],
-      [/(\b(?:api[_-]?key|token|secret|password|passwd|client_secret)\w*\s*[:=]\s*["']?)[^"'\s]+(["']?)/i, '\1[REDACTED]\2'],
+      [/(\b(?:api[_-]?key|token|secret|password|passwd|client_secret)\w*\s*[:=]\s*["']?)[^"'\s]+(["']?)/i,
+       '\1[REDACTED]\2'],
       [/(x-api-key:\s*)[A-Za-z0-9._-]+/i, '\1[REDACTED]']
     ].freeze
 
