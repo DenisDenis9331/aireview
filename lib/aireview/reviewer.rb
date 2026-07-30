@@ -16,7 +16,7 @@ module Aireview
     def initialize(config:, logger: Logger.new($stderr))
       @config = config
       @logger = logger
-      @ruby_llm_configured = false
+      @llm_contexts = {}
     end
 
     def generate(system_prompt:, user_prompt:)
@@ -24,8 +24,11 @@ module Aireview
         stage: 'generate',
         system: system_prompt,
         user: user_prompt,
-        model: @config.generate_model,
-        temperature: @config.generate_temperature
+        options: {
+          model: @config.generate_model,
+          temperature: @config.generate_temperature,
+          provider: @config.generate_provider
+        }
       )
     end
 
@@ -34,25 +37,28 @@ module Aireview
         stage: 'critique',
         system: system_prompt,
         user: user_prompt,
-        model: @config.critique_model,
-        temperature: @config.critique_temperature
+        options: {
+          model: @config.critique_model,
+          temperature: @config.critique_temperature,
+          provider: @config.critique_provider
+        }
       )
     end
 
     private
 
-    def call_llm(stage:, system:, user:, model:, temperature:)
+    def call_llm(stage:, system:, user:, options:)
       require 'ruby_llm'
 
       @config.require_llm_configuration!
-      configure_ruby_llm
-      response = request_with_retries(stage: stage, model: model) do
+      context = llm_context(stage, options[:provider])
+      response = request_with_retries(stage: stage, model: options[:model]) do
         perform_llm_request(
+          context: context,
           stage: stage,
           system: system,
           user: user,
-          model: model,
-          temperature: temperature
+          options: options
         )
       end
       response.content
@@ -60,14 +66,18 @@ module Aireview
       @logger.error("LLM #{stage} setup failed: #{e.message}")
       raise ConfigError, "Missing dependency: #{e.message}"
     rescue Timeout::Error
-      @logger.warn("LLM #{stage} request timed out after #{@config.llm_timeout} seconds (model=#{model})")
+      @logger.warn(
+        "LLM #{stage} request timed out after #{@config.llm_timeout} seconds (model=#{options[:model]})"
+      )
       raise ApiError, "LLM request timed out after #{@config.llm_timeout} seconds. " \
                       "Try again later or switch model via --generate-model/--critique-model."
     end
 
-    def perform_llm_request(stage:, system:, user:, model:, temperature:)
+    def perform_llm_request(context:, stage:, system:, user:, options:)
+      model = options[:model]
+      temperature = options[:temperature]
       @logger.info("LLM #{stage} request started (model=#{model}, temperature=#{temperature})")
-      chat = RubyLLM.chat(model: model).with_temperature(temperature.to_f)
+      chat = context.chat(model: model, provider: options[:provider].to_sym).with_temperature(temperature.to_f)
       chat.with_instructions(system)
       response = Timeout.timeout(@config.llm_timeout.to_f) { chat.ask(user) }
       @logger.info("LLM #{stage} request completed (model=#{model})")
@@ -204,18 +214,18 @@ module Aireview
       end
     end
 
-    def configure_ruby_llm
-      return if @ruby_llm_configured
+    def llm_context(stage, provider)
+      @llm_contexts[stage] ||= build_llm_context(provider.to_s)
+    end
 
-      provider = @config.llm_provider.to_s
-      api_key = @config.provider_api_key(provider)
+    def build_llm_context(provider)
+      api_key = @config.provider_api_key(provider) unless provider == 'ollama'
 
-      RubyLLM.configure do |ruby_config|
+      RubyLLM.context do |ruby_config|
         configure_http_proxy(ruby_config)
+        ruby_config.request_timeout = @config.llm_timeout.to_f
         configure_provider(ruby_config, provider, api_key)
       end
-
-      @ruby_llm_configured = true
     end
 
     def configure_http_proxy(ruby_config)
@@ -231,7 +241,7 @@ module Aireview
       when 'anthropic'
         ruby_config.anthropic_api_key = api_key
       when 'ollama'
-        configure_ollama(ruby_config, api_key)
+        ruby_config.ollama_api_base = @config.ollama_api_base
       else
         raise ConfigError, "Unsupported LLM provider: #{provider.inspect}"
       end
@@ -242,12 +252,6 @@ module Aireview
       return unless Aireview::Utils.present?(@config.llm_api_base)
 
       ruby_config.public_send("#{provider}_api_base=", @config.llm_api_base)
-    end
-
-    def configure_ollama(ruby_config, api_key)
-      ruby_config.openai_api_key = api_key || 'ollama'
-      ruby_config.openai_api_base = @config.llm_api_base || 'http://localhost:11434/v1'
-      ruby_config.openai_use_system_role = true
     end
   end
 end
