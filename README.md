@@ -23,7 +23,7 @@ MVP-flow:
 - Ruby 3.1.3
 - Bundler 2.3.26
 - Personal access token для GitLab
-- API-ключ провайдера
+- API-ключ удалённого LLM-провайдера; для локальной Ollama ключ не нужен
 - Опционально — API-токен Jira
 
 ## Configuration
@@ -42,25 +42,67 @@ LLM_PROVIDER=gemini
 LLM_TEMPERATURE=0
 LLM_TIMEOUT=60
 LLM_HTTP_PROXY=http://127.0.0.1:8888
+LLM_GENERATE_PROVIDER=gemini
 LLM_GENERATE_MODEL=gemini-2.5-pro
 LLM_GENERATE_TEMPERATURE=0.3
+LLM_CRITIQUE_PROVIDER=gemini
 LLM_CRITIQUE_MODEL=gemini-2.5-flash
 LLM_CRITIQUE_TEMPERATURE=0
 REVIEW_LANGUAGE=ru
 ```
 
 Для других провайдеров используйте соответствующий ключ, например
-`OPENAI_API_KEY`, `OPENROUTER_API_KEY` или `ANTHROPIC_API_KEY`, и задайте оба
-параметра — `LLM_GENERATE_MODEL` и `LLM_CRITIQUE_MODEL`. Эти две настройки
-моделей обязательны и могут указывать на одну и ту же модель.
+`OPENAI_API_KEY`, `OPENROUTER_API_KEY` или `ANTHROPIC_API_KEY`. Провайдеры и
+модели каждой стадии задаются через `LLM_GENERATE_PROVIDER`,
+`LLM_GENERATE_MODEL`, `LLM_CRITIQUE_PROVIDER` и `LLM_CRITIQUE_MODEL`.
+`LLM_PROVIDER` остаётся общим значением по умолчанию, если отдельный провайдер
+стадии не указан.
 
 Если через прокси нужно гонять только LLM-трафик, задайте `LLM_HTTP_PROXY` или
 `llm.http_proxy`. Это настраивает только RubyLLM; запросы к GitLab и Jira
 продолжают идти напрямую.
 
+### Локальная Ollama
+
+Установите Ollama по [официальной инструкции](https://docs.ollama.com/quickstart),
+затем загрузите локальную модель
+[`qwen2.5-coder:7b`](https://ollama.com/library/qwen2.5-coder:7b):
+
+```bash
+ollama pull qwen2.5-coder:7b
+```
+
+Если сервис не запустился автоматически, запустите его отдельно и оставьте
+работать во время ревью:
+
+```bash
+ollama serve
+```
+
+Для генерации через Gemini и критики через локальную Ollama настройте `.env`:
+
+```bash
+LLM_GENERATE_PROVIDER=gemini
+LLM_GENERATE_MODEL=gemini-2.5-pro
+LLM_CRITIQUE_PROVIDER=ollama
+LLM_CRITIQUE_MODEL=qwen2.5-coder:7b
+OLLAMA_API_BASE=http://localhost:11434/v1
+GEMINI_API_KEY=xxx
+LLM_TIMEOUT=300
+```
+
+Для локальной Ollama API-ключ не требуется. Провайдеры можно поменять местами,
+изменив `LLM_GENERATE_PROVIDER`, `LLM_CRITIQUE_PROVIDER` и соответствующие
+модели. Чтобы обе стадии работали локально, укажите `ollama` в обеих
+переменных провайдера. Адрес с `/v1` соответствует
+[конфигурации Ollama в RubyLLM](https://rubyllm.com/configuration/#provider-configuration).
+`LLM_TIMEOUT` задаёт время ожидания каждого LLM-запроса в секундах; для
+медленной локальной модели его можно увеличить.
+
 Проектные правила живут в `.aireview.yml`. В YAML параметры `generate.model`
 и `critique.model` для каждой стадии обязательны и не наследуются от базовых
-настроек `llm`:
+настроек `llm`. Параметр `llm.provider` используется по умолчанию, если
+`generate.provider` или `critique.provider` не задан:
 
 ```yaml
 ignore_paths:
@@ -92,16 +134,20 @@ review_instructions: |
   - отсутствие тестов для новой логики
   Игнорируй стилистику — для этого есть линтеры.
 
+ollama_api_base: http://localhost:11434/v1
+
 llm:
   provider: gemini
   temperature: 0
   timeout: 60
   http_proxy: http://127.0.0.1:8888
   generate:
+    provider: gemini
     model: gemini-2.5-pro
     temperature: 0.3
   critique:
-    model: gemini-2.5-flash
+    provider: ollama
+    model: qwen2.5-coder:7b
     temperature: 0
 ```
 
