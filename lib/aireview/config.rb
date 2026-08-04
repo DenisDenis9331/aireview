@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require 'logger'
 require 'pathname'
 require 'yaml'
@@ -91,41 +92,50 @@ module Aireview
     end
 
     def self.env_config(env)
-      config = {}
+      mapped_env_config(env)
+        .merge('llm' => llm_env_config(env))
+        .merge(provider_key_env_config(env))
+        .merge(generic_api_key_env_config(env))
+    end
 
-      ENV_MAPPING.each do |key, env_key|
+    def self.mapped_env_config(env)
+      ENV_MAPPING.each_with_object({}) do |(key, env_key), config|
         value = env[env_key]
         config[key] = value unless Aireview::Utils.blank?(value)
       end
+    end
 
-      llm_config = {
+    def self.llm_env_config(env)
+      {
         'provider' => env['LLM_PROVIDER'],
         'temperature' => parse_float(env['LLM_TEMPERATURE']),
         'timeout' => parse_float(env['LLM_TIMEOUT']),
-        'generate' => {
-          'model' => env['LLM_GENERATE_MODEL'],
-          'temperature' => parse_float(env['LLM_GENERATE_TEMPERATURE'])
-        }.reject { |_, value| value.nil? },
-        'critique' => {
-          'model' => env['LLM_CRITIQUE_MODEL'],
-          'temperature' => parse_float(env['LLM_CRITIQUE_TEMPERATURE'])
-        }.reject { |_, value| value.nil? }
-      }.reject { |_, value| value.nil? }
-      llm_config.delete('generate') if llm_config['generate'].empty?
-      llm_config.delete('critique') if llm_config['critique'].empty?
-      config['llm'] = llm_config
+        'generate' => llm_stage_env_config(env, 'GENERATE'),
+        'critique' => llm_stage_env_config(env, 'CRITIQUE')
+      }.compact.reject { |key, value| %w[generate critique].include?(key) && value.empty? }
+    end
 
-      PROVIDER_KEY_MAPPING.each do |provider, env_key|
+    def self.llm_stage_env_config(env, stage)
+      {
+        'model' => env["LLM_#{stage}_MODEL"],
+        'temperature' => parse_float(env["LLM_#{stage}_TEMPERATURE"])
+      }.compact
+    end
+
+    def self.provider_key_env_config(env)
+      PROVIDER_KEY_MAPPING.each_with_object({}) do |(provider, env_key), config|
         next unless env_key
 
         value = env[env_key]
         config["#{provider}_api_key"] = value unless Aireview::Utils.blank?(value)
       end
+    end
 
+    def self.generic_api_key_env_config(env)
       api_key = env['LLM_API_KEY']
-      config['llm_api_key'] = api_key unless Aireview::Utils.blank?(api_key)
+      return {} if Aireview::Utils.blank?(api_key)
 
-      config
+      {'llm_api_key' => api_key}
     end
 
     def self.parse_float(value)
@@ -171,15 +181,11 @@ module Aireview
       generate_temperature: nil,
       critique_temperature: nil
     )
-      return self if generate_model.nil? && critique_model.nil? &&
-                     generate_temperature.nil? && critique_temperature.nil?
-
-      llm_config = {}
-
-      llm_config['generate'] = (llm_config['generate'] || {}).merge('model' => generate_model) if generate_model
-      llm_config['critique'] = (llm_config['critique'] || {}).merge('model' => critique_model) if critique_model
-      llm_config['generate'] = (llm_config['generate'] || {}).merge('temperature' => generate_temperature) unless generate_temperature.nil?
-      llm_config['critique'] = (llm_config['critique'] || {}).merge('temperature' => critique_temperature) unless critique_temperature.nil?
+      llm_config = {
+        'generate' => stage_overrides(model: generate_model, temperature: generate_temperature),
+        'critique' => stage_overrides(model: critique_model, temperature: critique_temperature)
+      }.reject { |_, overrides| overrides.empty? }
+      return self if llm_config.empty?
 
       merged = self.class.deep_merge(
         @data,
@@ -301,6 +307,13 @@ module Aireview
     end
 
     private
+
+    def stage_overrides(model:, temperature:)
+      {
+        'model' => model,
+        'temperature' => temperature
+      }.compact
+    end
 
     def dig(*keys)
       keys.reduce(@data) do |accumulator, key|
