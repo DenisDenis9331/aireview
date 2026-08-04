@@ -42,8 +42,9 @@ module Aireview
 
     def run_review(argv)
       options, mr_url = review_options_and_url(argv)
+      parser_result = MrParser.parse(mr_url)
       config = load_review_config(options)
-      context = load_review_context(mr_url, config, options)
+      context = load_review_context(parser_result, config, options)
 
       execute_review(config, context, options)
     end
@@ -72,8 +73,7 @@ module Aireview
       config
     end
 
-    def load_review_context(mr_url, config, options)
-      parser_result = MrParser.parse(mr_url)
+    def load_review_context(parser_result, config, options)
       gitlab_client = build_gitlab_client(config, parser_result)
       merge_request, changes = fetch_merge_request_data(gitlab_client, parser_result)
 
