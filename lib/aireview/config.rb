@@ -27,6 +27,7 @@ module Aireview
       'secret_files' => DEFAULT_SECRET_FILES,
       'review_instructions' => nil,
       'llm_api_base' => nil,
+      'ollama_api_base' => 'http://localhost:11434/v1',
       'llm_http_proxy' => nil,
       'llm' => {
         'provider' => 'gemini',
@@ -43,6 +44,7 @@ module Aireview
       'jira_token' => 'JIRA_TOKEN',
       'review_language' => 'REVIEW_LANGUAGE',
       'llm_api_base' => 'LLM_API_BASE',
+      'ollama_api_base' => 'OLLAMA_API_BASE',
       'llm_http_proxy' => 'LLM_HTTP_PROXY'
     }.freeze
 
@@ -117,6 +119,7 @@ module Aireview
 
     def self.llm_stage_env_config(env, stage)
       {
+        'provider' => env["LLM_#{stage}_PROVIDER"],
         'model' => env["LLM_#{stage}_MODEL"],
         'temperature' => parse_float(env["LLM_#{stage}_TEMPERATURE"])
       }.compact
@@ -234,6 +237,14 @@ module Aireview
       dig('llm', 'critique', 'model')
     end
 
+    def generate_provider
+      dig('llm', 'generate', 'provider') || llm_provider
+    end
+
+    def critique_provider
+      dig('llm', 'critique', 'provider') || llm_provider
+    end
+
     def generate_temperature
       dig('llm', 'generate', 'temperature') || llm_temperature
     end
@@ -244,6 +255,10 @@ module Aireview
 
     def llm_api_base
       @data['llm_api_base']
+    end
+
+    def ollama_api_base
+      @data['ollama_api_base'] || DEFAULTS['ollama_api_base']
     end
 
     def llm_http_proxy
@@ -300,10 +315,16 @@ module Aireview
     def require_llm_configuration!
       require_models!
 
-      return if llm_provider == 'ollama'
-      return provider_api_key if Aireview::Utils.present?(provider_api_key)
+      missing_keys = {
+        'generate' => generate_provider,
+        'critique' => critique_provider
+      }.filter_map do |stage, provider|
+        next if provider.to_s == 'ollama'
+        next if Aireview::Utils.present?(provider_api_key(provider))
 
-      raise ConfigError, "API key is required for provider #{llm_provider.inspect}"
+        "#{stage}: API key is required for provider #{provider.inspect}"
+      end
+      raise ConfigError, missing_keys.join(', ') unless missing_keys.empty?
     end
 
     private
