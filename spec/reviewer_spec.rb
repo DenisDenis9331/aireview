@@ -78,11 +78,14 @@ RSpec.describe Aireview::Reviewer do
       block.call(context_config)
       context = instance_double('RubyLLM::Context')
       allow(context).to receive(:chat)
-        .with(model: 'gemini-2.5-pro', provider: anything)
+        .with(model: 'gemini-2.5-pro', provider: anything, assume_model_exists: true)
         .and_return(generate_chat)
       allow(context).to receive(:chat)
-        .with(model: 'gemini-2.5-flash-lite', provider: anything)
+        .with(model: 'gemini-2.5-flash-lite', provider: anything, assume_model_exists: true)
         .and_return(critique_chat)
+      allow(context).to receive(:chat)
+        .with(model: 'gemini-3.6-flash', provider: anything, assume_model_exists: true)
+        .and_return(generate_chat)
       context_configs << context_config
       contexts << context
       context
@@ -112,7 +115,9 @@ RSpec.describe Aireview::Reviewer do
     result = reviewer.generate(system_prompt: 'system prompt', user_prompt: 'user prompt')
 
     expect(result).to eq('generate body')
-    expect(contexts.first).to have_received(:chat).with(model: 'gemini-2.5-pro', provider: :gemini)
+    expect(contexts.first)
+      .to have_received(:chat)
+      .with(model: 'gemini-2.5-pro', provider: :gemini, assume_model_exists: true)
     expect(generate_chat).to have_received(:with_temperature).with(0.3)
   end
 
@@ -121,7 +126,9 @@ RSpec.describe Aireview::Reviewer do
     result = reviewer.critique(system_prompt: 'system prompt', user_prompt: 'user prompt')
 
     expect(result).to eq('critique body')
-    expect(contexts.first).to have_received(:chat).with(model: 'gemini-2.5-flash-lite', provider: :gemini)
+    expect(contexts.first)
+      .to have_received(:chat)
+      .with(model: 'gemini-2.5-flash-lite', provider: :gemini, assume_model_exists: true)
     expect(critique_chat).to have_received(:with_temperature).with(0.0)
   end
 
@@ -133,6 +140,17 @@ RSpec.describe Aireview::Reviewer do
 
     expect(RubyLLM).to have_received(:context).twice
     expect(context_configs.first).not_to equal(context_configs.last)
+  end
+
+  it 'allows newly released models with an explicit provider' do
+    allow(config).to receive(:generate_model).and_return('gemini-3.6-flash')
+    reviewer = described_class.new(config: config, logger: logger)
+
+    reviewer.generate(system_prompt: 'system prompt', user_prompt: 'user prompt')
+
+    expect(contexts.first)
+      .to have_received(:chat)
+      .with(model: 'gemini-3.6-flash', provider: :gemini, assume_model_exists: true)
   end
 
   it 'sets the RubyLLM request timeout from LLM_TIMEOUT' do
@@ -278,10 +296,10 @@ RSpec.describe Aireview::Reviewer do
 
           expect(contexts.first)
             .to have_received(:chat)
-            .with(model: 'gemini-2.5-pro', provider: generate_value.to_sym)
+            .with(model: 'gemini-2.5-pro', provider: generate_value.to_sym, assume_model_exists: true)
           expect(contexts.last)
             .to have_received(:chat)
-            .with(model: 'gemini-2.5-flash-lite', provider: critique_value.to_sym)
+            .with(model: 'gemini-2.5-flash-lite', provider: critique_value.to_sym, assume_model_exists: true)
           expect(global_ruby_config.to_h).to eq(global_config_before)
         end
       end
@@ -297,7 +315,7 @@ RSpec.describe Aireview::Reviewer do
 
       expect(contexts.first)
         .to have_received(:chat)
-        .with(model: 'gemini-2.5-pro', provider: :ollama)
+        .with(model: 'gemini-2.5-pro', provider: :ollama, assume_model_exists: true)
       expect(context_configs.first.ollama_api_base).to eq('http://localhost:11434/v1')
       expect(context_configs.first.openai_api_key).to eq(global_ruby_config.openai_api_key)
       expect(context_configs.first.openai_api_base).to eq(global_ruby_config.openai_api_base)

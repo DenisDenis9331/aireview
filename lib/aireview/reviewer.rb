@@ -77,7 +77,11 @@ module Aireview
       model = options[:model]
       temperature = options[:temperature]
       @logger.info("LLM #{stage} request started (model=#{model}, temperature=#{temperature})")
-      chat = context.chat(model: model, provider: options[:provider].to_sym).with_temperature(temperature.to_f)
+      chat = context.chat(
+        model: model,
+        provider: options[:provider].to_sym,
+        assume_model_exists: true
+      ).with_temperature(temperature.to_f)
       chat.with_instructions(system)
       response = Timeout.timeout(@config.llm_timeout.to_f) { chat.ask(user) }
       @logger.info("LLM #{stage} request completed (model=#{model})")
