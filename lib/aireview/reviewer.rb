@@ -77,11 +77,23 @@ module Aireview
       model = options[:model]
       temperature = options[:temperature]
       @logger.info("LLM #{stage} request started (model=#{model}, temperature=#{temperature})")
-      chat = context.chat(model: model, provider: options[:provider].to_sym).with_temperature(temperature.to_f)
+      chat = build_chat(context: context, stage: stage, model: model, provider: options[:provider])
+        .with_temperature(temperature.to_f)
       chat.with_instructions(system)
       response = Timeout.timeout(@config.llm_timeout.to_f) { chat.ask(user) }
       @logger.info("LLM #{stage} request completed (model=#{model})")
       response
+    end
+
+    def build_chat(context:, stage:, model:, provider:)
+      context.chat(model: model, provider: provider.to_sym)
+    rescue RubyLLM::ModelNotFoundError
+      @logger.warn(
+        "LLM #{stage}: model not found in RubyLLM registry; " \
+        "using fallback with incomplete model metadata " \
+        "(model=#{model}, provider=#{provider})"
+      )
+      context.chat(model: model, provider: provider.to_sym, assume_model_exists: true)
     end
 
     def request_with_retries(stage:, model:)

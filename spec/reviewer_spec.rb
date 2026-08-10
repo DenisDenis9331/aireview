@@ -70,6 +70,7 @@ RSpec.describe Aireview::Reviewer do
     stub_const('RubyLLM::OverloadedError', Class.new(RubyLLM::Error))
     stub_const('RubyLLM::RateLimitError', Class.new(RubyLLM::Error))
     stub_const('RubyLLM::ContextLengthExceededError', Class.new(RubyLLM::Error))
+    stub_const('RubyLLM::ModelNotFoundError', Class.new(StandardError))
     RubyLLM.singleton_class.attr_accessor :config
     RubyLLM.config = global_ruby_config
 
@@ -83,6 +84,12 @@ RSpec.describe Aireview::Reviewer do
       allow(context).to receive(:chat)
         .with(model: 'gemini-2.5-flash-lite', provider: anything)
         .and_return(critique_chat)
+      allow(context).to receive(:chat)
+        .with(model: 'gemini-3.6-flash', provider: anything)
+        .and_raise(RubyLLM::ModelNotFoundError)
+      allow(context).to receive(:chat)
+        .with(model: 'gemini-3.6-flash', provider: anything, assume_model_exists: true)
+        .and_return(generate_chat)
       context_configs << context_config
       contexts << context
       context
@@ -107,12 +114,14 @@ RSpec.describe Aireview::Reviewer do
     expect(context_configs.first.gemini_api_base).to eq('https://llm.example.test')
   end
 
-  it 'uses generate model and temperature for the generate pass' do
+  it 'uses a known model without bypassing the registry' do
     reviewer = described_class.new(config: config, logger: logger)
     result = reviewer.generate(system_prompt: 'system prompt', user_prompt: 'user prompt')
 
     expect(result).to eq('generate body')
-    expect(contexts.first).to have_received(:chat).with(model: 'gemini-2.5-pro', provider: :gemini)
+    expect(contexts.first)
+      .to have_received(:chat)
+      .with(model: 'gemini-2.5-pro', provider: :gemini)
     expect(generate_chat).to have_received(:with_temperature).with(0.3)
   end
 
@@ -121,7 +130,9 @@ RSpec.describe Aireview::Reviewer do
     result = reviewer.critique(system_prompt: 'system prompt', user_prompt: 'user prompt')
 
     expect(result).to eq('critique body')
-    expect(contexts.first).to have_received(:chat).with(model: 'gemini-2.5-flash-lite', provider: :gemini)
+    expect(contexts.first)
+      .to have_received(:chat)
+      .with(model: 'gemini-2.5-flash-lite', provider: :gemini)
     expect(critique_chat).to have_received(:with_temperature).with(0.0)
   end
 
@@ -133,6 +144,26 @@ RSpec.describe Aireview::Reviewer do
 
     expect(RubyLLM).to have_received(:context).twice
     expect(context_configs.first).not_to equal(context_configs.last)
+  end
+
+  it 'retries an unknown model with an explicit provider' do
+    allow(config).to receive(:generate_model).and_return('gemini-3.6-flash')
+    log_output = StringIO.new
+    reviewer = described_class.new(config: config, logger: Logger.new(log_output))
+
+    reviewer.generate(system_prompt: 'system prompt', user_prompt: 'user prompt')
+
+    expect(contexts.first)
+      .to have_received(:chat)
+      .with(model: 'gemini-3.6-flash', provider: :gemini)
+    expect(contexts.first)
+      .to have_received(:chat)
+      .with(model: 'gemini-3.6-flash', provider: :gemini, assume_model_exists: true)
+    expect(log_output.string).to include(
+      'LLM generate: model not found in RubyLLM registry; ' \
+      'using fallback with incomplete model metadata ' \
+      '(model=gemini-3.6-flash, provider=gemini)'
+    )
   end
 
   it 'sets the RubyLLM request timeout from LLM_TIMEOUT' do
