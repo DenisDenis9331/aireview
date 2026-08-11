@@ -68,6 +68,13 @@ RSpec.describe Aireview::ReviewPipeline do
     )
   end
 
+  def structured_generate_result(candidates)
+    {
+      'summary' => 'MR recalculates order totals during checkout.',
+      'candidates' => candidates.map { |candidate| candidate.transform_keys(&:to_s) }
+    }
+  end
+
   it 'renders only candidates accepted by critique' do
     allow(reviewer).to receive(:generate).and_return(generate_result(candidates))
     allow(reviewer).to receive(:critique).and_return(
@@ -104,8 +111,79 @@ RSpec.describe Aireview::ReviewPipeline do
     expect(result).to include('ok')
   end
 
+  it 'processes structured Hash responses without JSON parsing or repair' do
+    allow(reviewer).to receive(:generate).and_return(structured_generate_result([candidates.first]))
+    allow(reviewer).to receive(:critique).and_return(
+      {
+        'verdicts' => [
+          { 'id' => 'C1', 'decision' => 'keep', 'reason' => 'confirmed by diff' }
+        ]
+      }
+    )
+    allow(JSON).to receive(:parse).and_call_original
+
+    result = pipeline.run(merge_request: merge_request, changes_text: changes_text)
+
+    expect(JSON).not_to have_received(:parse)
+    expect(reviewer).to have_received(:generate).once
+    expect(reviewer).to have_received(:critique).once
+    expect(result).to include('Tax is no longer included')
+  end
+
+  it 'continues processing JSON strings without repair' do
+    allow(reviewer).to receive(:generate).and_return(generate_result([candidates.first]))
+
+    result = pipeline.run(merge_request: merge_request, changes_text: changes_text, critique: false)
+
+    expect(reviewer).to have_received(:generate).once
+    expect(result).to include('Tax is no longer included')
+  end
+
+  it 'rejects an invalid structured generate result without repair' do
+    invalid_result = structured_generate_result([{ file: 'app/models/order.rb' }])
+    allow(reviewer).to receive(:generate).and_return(invalid_result)
+
+    expect do
+      pipeline.run(merge_request: merge_request, changes_text: changes_text, critique: false)
+    end.to raise_error(
+      Aireview::ParseError,
+      /invalid generate result: each generate candidate must include a non-empty id/
+    )
+    expect(reviewer).to have_received(:generate).once
+  end
+
+  it 'rejects an unsupported response type without repair' do
+    allow(reviewer).to receive(:generate).and_return(nil)
+
+    expect do
+      pipeline.run(merge_request: merge_request, changes_text: changes_text, critique: false)
+    end.to raise_error(Aireview::ParseError, /unsupported generate result type: NilClass/)
+    expect(reviewer).to have_received(:generate).once
+  end
+
+  it 'rejects an invalid structured critique result without repair' do
+    allow(reviewer).to receive(:generate).and_return(structured_generate_result([candidates.first]))
+    allow(reviewer).to receive(:critique).and_return(
+      { 'verdicts' => [{ 'id' => 'C9', 'decision' => 'keep', 'reason' => 'hallucinated id' }] }
+    )
+
+    expect do
+      pipeline.run(merge_request: merge_request, changes_text: changes_text)
+    end.to raise_error(Aireview::ParseError, /invalid critique result: unknown verdict ids: C9/)
+    expect(reviewer).to have_received(:critique).once
+  end
+
   it 'repairs invalid generate JSON once' do
     allow(reviewer).to receive(:generate).and_return('not json', generate_result([candidates.first]))
+
+    result = pipeline.run(merge_request: merge_request, changes_text: changes_text, critique: false)
+
+    expect(reviewer).to have_received(:generate).twice
+    expect(result).to include('Tax is no longer included')
+  end
+
+  it 'accepts a structured Hash returned by a repair request for a JSON string' do
+    allow(reviewer).to receive(:generate).and_return('not json', structured_generate_result([candidates.first]))
 
     result = pipeline.run(merge_request: merge_request, changes_text: changes_text, critique: false)
 
