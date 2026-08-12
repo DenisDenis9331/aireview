@@ -96,9 +96,11 @@ RSpec.describe Aireview::Reviewer do
     end
 
     allow(generate_chat).to receive(:with_temperature).with(0.3).and_return(generate_chat)
+    allow(generate_chat).to receive(:with_schema).with(Aireview::GenerateOutputSchema).and_return(generate_chat)
     allow(generate_chat).to receive(:with_instructions).with('system prompt').and_return(generate_chat)
     allow(generate_chat).to receive(:ask).with('user prompt').and_return(generate_response)
     allow(critique_chat).to receive(:with_temperature).with(0.0).and_return(critique_chat)
+    allow(critique_chat).to receive(:with_schema).with(Aireview::CritiqueOutputSchema).and_return(critique_chat)
     allow(critique_chat).to receive(:with_instructions).with('system prompt').and_return(critique_chat)
     allow(critique_chat).to receive(:ask).with('user prompt').and_return(critique_response)
   end
@@ -123,6 +125,7 @@ RSpec.describe Aireview::Reviewer do
       .to have_received(:chat)
       .with(model: 'gemini-2.5-pro', provider: :gemini)
     expect(generate_chat).to have_received(:with_temperature).with(0.3)
+    expect(generate_chat).to have_received(:with_schema).with(Aireview::GenerateOutputSchema)
   end
 
   it 'uses critique model and temperature for the critique pass' do
@@ -134,6 +137,7 @@ RSpec.describe Aireview::Reviewer do
       .to have_received(:chat)
       .with(model: 'gemini-2.5-flash-lite', provider: :gemini)
     expect(critique_chat).to have_received(:with_temperature).with(0.0)
+    expect(critique_chat).to have_received(:with_schema).with(Aireview::CritiqueOutputSchema)
   end
 
   it 'creates one isolated context per stage' do
@@ -313,6 +317,8 @@ RSpec.describe Aireview::Reviewer do
           expect(contexts.last)
             .to have_received(:chat)
             .with(model: 'gemini-2.5-flash-lite', provider: critique_value.to_sym)
+          expect(generate_chat).to have_received(:with_schema).with(Aireview::GenerateOutputSchema)
+          expect(critique_chat).to have_received(:with_schema).with(Aireview::CritiqueOutputSchema)
           expect(global_ruby_config.to_h).to eq(global_config_before)
         end
       end
