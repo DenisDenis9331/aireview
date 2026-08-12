@@ -120,7 +120,34 @@ module Aireview
     end
 
     def parse_with_repair(raw:, kind:, expected:, repair_stage:, critique_candidate_ids: nil)
-      parse_expected_json(raw, expected, critique_candidate_ids: critique_candidate_ids)
+      if raw.is_a?(Hash)
+        return parse_structured_result(
+          raw,
+          kind: kind,
+          expected: expected,
+          critique_candidate_ids: critique_candidate_ids
+        )
+      end
+
+      raise ParseError, "LLM returned unsupported #{kind} type: #{raw.class}" unless raw.is_a?(String)
+
+      parse_string_with_repair(
+        raw: raw,
+        kind: kind,
+        expected: expected,
+        repair_stage: repair_stage,
+        critique_candidate_ids: critique_candidate_ids
+      )
+    end
+
+    def parse_structured_result(raw, kind:, expected:, critique_candidate_ids: nil)
+      parse_expected_result(raw, expected, critique_candidate_ids: critique_candidate_ids)
+    rescue SchemaError => e
+      raise ParseError, "LLM returned invalid #{kind}: #{e.message}"
+    end
+
+    def parse_string_with_repair(raw:, kind:, expected:, repair_stage:, critique_candidate_ids: nil)
+      parse_expected_result(raw, expected, critique_candidate_ids: critique_candidate_ids)
     rescue JSON::ParserError, SchemaError => e
       @logger.warn("Invalid #{kind} JSON, requesting one repair: #{e.message}")
       repaired = repair_json(
@@ -131,14 +158,14 @@ module Aireview
         critique_candidate_ids: critique_candidate_ids
       )
       begin
-        parse_expected_json(repaired, expected, critique_candidate_ids: critique_candidate_ids)
+        parse_expected_result(repaired, expected, critique_candidate_ids: critique_candidate_ids)
       rescue JSON::ParserError, SchemaError => second_error
         raise ParseError, "LLM returned invalid #{kind} JSON after repair: #{second_error.message}"
       end
     end
 
-    def parse_expected_json(raw, expected, critique_candidate_ids: nil)
-      parsed = JSON.parse(strip_code_fences(raw.to_s))
+    def parse_expected_result(raw, expected, critique_candidate_ids: nil)
+      parsed = raw.is_a?(Hash) ? raw : JSON.parse(strip_code_fences(raw.to_s))
 
       case expected
       when :generate
@@ -192,15 +219,15 @@ module Aireview
     end
 
     def validate_generate_result_shape!(parsed)
-      return if parsed.is_a?(Hash) && parsed['candidates'].is_a?(Array)
-
-      raise SchemaError, 'expected an object with summary and candidates array'
+      valid_shape = parsed.is_a?(Hash) && parsed['candidates'].is_a?(Array)
+      raise SchemaError, 'expected an object with summary and candidates array' unless valid_shape
+      raise SchemaError, 'each generate candidate must be an object' unless parsed['candidates'].all?(Hash)
     end
 
     def validate_critique_result_shape!(parsed)
-      return if parsed.is_a?(Hash) && parsed['verdicts'].is_a?(Array)
-
-      raise SchemaError, 'expected an object with verdicts array'
+      valid_shape = parsed.is_a?(Hash) && parsed['verdicts'].is_a?(Array)
+      raise SchemaError, 'expected an object with verdicts array' unless valid_shape
+      raise SchemaError, 'each critique verdict must be an object' unless parsed['verdicts'].all?(Hash)
     end
 
     def validate_identifiers!(identifiers, missing_message:, duplicate_prefix:)
