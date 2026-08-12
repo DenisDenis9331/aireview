@@ -152,6 +152,20 @@ RSpec.describe Aireview::ReviewPipeline do
     expect(reviewer).to have_received(:generate).once
   end
 
+  it 'rejects malformed structured generate candidates without repair' do
+    allow(reviewer).to receive(:generate).and_return(
+      { 'summary' => 'Malformed result', 'candidates' => [nil] }
+    )
+
+    expect do
+      pipeline.run(merge_request: merge_request, changes_text: changes_text, critique: false)
+    end.to raise_error(
+      Aireview::ParseError,
+      /invalid generate result: each generate candidate must be an object/
+    )
+    expect(reviewer).to have_received(:generate).once
+  end
+
   it 'rejects an unsupported response type without repair' do
     allow(reviewer).to receive(:generate).and_return(nil)
 
@@ -170,6 +184,19 @@ RSpec.describe Aireview::ReviewPipeline do
     expect do
       pipeline.run(merge_request: merge_request, changes_text: changes_text)
     end.to raise_error(Aireview::ParseError, /invalid critique result: unknown verdict ids: C9/)
+    expect(reviewer).to have_received(:critique).once
+  end
+
+  it 'rejects malformed structured critique verdicts without repair' do
+    allow(reviewer).to receive(:generate).and_return(structured_generate_result([candidates.first]))
+    allow(reviewer).to receive(:critique).and_return({ 'verdicts' => [42] })
+
+    expect do
+      pipeline.run(merge_request: merge_request, changes_text: changes_text)
+    end.to raise_error(
+      Aireview::ParseError,
+      /invalid critique result: each critique verdict must be an object/
+    )
     expect(reviewer).to have_received(:critique).once
   end
 

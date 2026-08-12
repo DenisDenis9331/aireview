@@ -219,15 +219,15 @@ module Aireview
     end
 
     def validate_generate_result_shape!(parsed)
-      return if parsed.is_a?(Hash) && parsed['candidates'].is_a?(Array)
-
-      raise SchemaError, 'expected an object with summary and candidates array'
+      valid_shape = parsed.is_a?(Hash) && parsed['candidates'].is_a?(Array)
+      raise SchemaError, 'expected an object with summary and candidates array' unless valid_shape
+      raise SchemaError, 'each generate candidate must be an object' unless parsed['candidates'].all?(Hash)
     end
 
     def validate_critique_result_shape!(parsed)
-      return if parsed.is_a?(Hash) && parsed['verdicts'].is_a?(Array)
-
-      raise SchemaError, 'expected an object with verdicts array'
+      valid_shape = parsed.is_a?(Hash) && parsed['verdicts'].is_a?(Array)
+      raise SchemaError, 'expected an object with verdicts array' unless valid_shape
+      raise SchemaError, 'each critique verdict must be an object' unless parsed['verdicts'].all?(Hash)
     end
 
     def validate_identifiers!(identifiers, missing_message:, duplicate_prefix:)
