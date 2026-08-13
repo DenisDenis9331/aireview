@@ -51,9 +51,8 @@ LLM_CRITIQUE_TEMPERATURE=0
 REVIEW_LANGUAGE=ru
 ```
 
-Для других провайдеров используйте соответствующий ключ, например
-`OPENAI_API_KEY`, `OPENROUTER_API_KEY` или `ANTHROPIC_API_KEY`. Провайдеры и
-модели каждой стадии задаются через `LLM_GENERATE_PROVIDER`,
+На текущий момент поддерживаются только провайдеры `gemini` и `ollama`.
+Провайдеры и модели каждой стадии задаются через `LLM_GENERATE_PROVIDER`,
 `LLM_GENERATE_MODEL`, `LLM_CRITIQUE_PROVIDER` и `LLM_CRITIQUE_MODEL`.
 `LLM_PROVIDER` остаётся общим значением по умолчанию, если отдельный провайдер
 стадии не указан.
