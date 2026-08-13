@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 require_relative 'errors'
+require_relative 'output_schemas'
 require_relative 'utils'
 require 'timeout'
 
@@ -27,7 +28,8 @@ module Aireview
         options: {
           model: @config.generate_model,
           temperature: @config.generate_temperature,
-          provider: @config.generate_provider
+          provider: @config.generate_provider,
+          schema: GenerateOutputSchema
         }
       )
     end
@@ -40,7 +42,8 @@ module Aireview
         options: {
           model: @config.critique_model,
           temperature: @config.critique_temperature,
-          provider: @config.critique_provider
+          provider: @config.critique_provider,
+          schema: CritiqueOutputSchema
         }
       )
     end
@@ -79,6 +82,7 @@ module Aireview
       @logger.info("LLM #{stage} request started (model=#{model}, temperature=#{temperature})")
       chat = build_chat(context: context, stage: stage, model: model, provider: options[:provider])
         .with_temperature(temperature.to_f)
+        .with_schema(options[:schema])
       chat.with_instructions(system)
       response = Timeout.timeout(@config.llm_timeout.to_f) { chat.ask(user) }
       @logger.info("LLM #{stage} request completed (model=#{model})")

@@ -50,9 +50,6 @@ module Aireview
 
     PROVIDER_KEY_MAPPING = {
       'gemini' => 'GEMINI_API_KEY',
-      'openai' => 'OPENAI_API_KEY',
-      'openrouter' => 'OPENROUTER_API_KEY',
-      'anthropic' => 'ANTHROPIC_API_KEY',
       'ollama' => nil
     }.freeze
 

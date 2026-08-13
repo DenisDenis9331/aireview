@@ -233,25 +233,6 @@ RSpec.describe Aireview::Config do
       end
     end
 
-    it 'validates API keys for generate and critique providers separately' do
-      Dir.mktmpdir do |dir|
-        config = described_class.load(
-          cwd: dir,
-          env: {
-            'LLM_GENERATE_PROVIDER' => 'gemini',
-            'LLM_GENERATE_MODEL' => 'gemini-2.5-pro',
-            'GEMINI_API_KEY' => 'gemini-secret',
-            'LLM_CRITIQUE_PROVIDER' => 'anthropic',
-            'LLM_CRITIQUE_MODEL' => 'claude-sonnet-4'
-          },
-          logger: Logger.new(nil)
-        )
-
-        expect { config.require_llm_configuration! }
-          .to raise_error(Aireview::ConfigError, /critique.*anthropic/)
-      end
-    end
-
     it 'requires a key only for the remote stage in a mixed configuration' do
       Dir.mktmpdir do |dir|
         config = described_class.load(
@@ -417,22 +398,5 @@ RSpec.describe Aireview::Config do
       end
     end
 
-    it 'loads OpenRouter API key from environment' do
-      Dir.mktmpdir do |dir|
-        config = described_class.load(
-          cwd: dir,
-          env: {
-            'LLM_PROVIDER' => 'openrouter',
-            'LLM_GENERATE_MODEL' => 'meta-llama/llama-3.3-70b-instruct:free',
-            'LLM_CRITIQUE_MODEL' => 'meta-llama/llama-3.3-70b-instruct:free',
-            'OPENROUTER_API_KEY' => 'sk-or-secret'
-          },
-          logger: Logger.new(nil)
-        )
-
-        expect(config.llm_provider).to eq('openrouter')
-        expect(config.provider_api_key).to eq('sk-or-secret')
-      end
-    end
   end
 end
