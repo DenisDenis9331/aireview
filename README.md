@@ -78,13 +78,17 @@ ollama pull qwen2.5-coder:7b
 ollama serve
 ```
 
-Для генерации через Gemini и критики через локальную Ollama настройте `.env`:
+Для качественного результата используйте для Critique более мощную модель,
+чем для Generate. Например, для генерации через локальную Ollama и критики
+через Gemini настройте `.env`:
 
 ```bash
-LLM_GENERATE_PROVIDER=gemini
-LLM_GENERATE_MODEL=gemini-2.5-pro
-LLM_CRITIQUE_PROVIDER=ollama
-LLM_CRITIQUE_MODEL=qwen2.5-coder:7b
+LLM_GENERATE_PROVIDER=ollama
+LLM_GENERATE_MODEL=qwen2.5-coder:7b
+LLM_GENERATE_TEMPERATURE=0
+LLM_CRITIQUE_PROVIDER=gemini
+LLM_CRITIQUE_MODEL=gemini-3.7-flash
+LLM_CRITIQUE_TEMPERATURE=0
 OLLAMA_API_BASE=http://localhost:11434/v1
 GEMINI_API_KEY=xxx
 LLM_TIMEOUT=300
