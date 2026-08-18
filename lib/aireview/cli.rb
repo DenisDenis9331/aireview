@@ -160,7 +160,7 @@ module Aireview
       @logger.info("Loading Jira issue #{key}")
       JiraClient.new(
         base_url: config.jira_url,
-        email: config.jira_email,
+        login: config.jira_login,
         token: config.jira_token,
         logger: @logger
       ).fetch_issue(key)

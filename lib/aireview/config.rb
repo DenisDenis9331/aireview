@@ -40,7 +40,7 @@ module Aireview
       'gitlab_url' => 'GITLAB_URL',
       'gitlab_token' => 'GITLAB_TOKEN',
       'jira_url' => 'JIRA_URL',
-      'jira_email' => 'JIRA_EMAIL',
+      'jira_login' => 'JIRA_LOGIN',
       'jira_token' => 'JIRA_TOKEN',
       'review_language' => 'REVIEW_LANGUAGE',
       'llm_api_base' => 'LLM_API_BASE',
@@ -206,8 +206,8 @@ module Aireview
       @data['jira_url']
     end
 
-    def jira_email
-      @data['jira_email']
+    def jira_login
+      @data['jira_login']
     end
 
     def jira_token
@@ -292,7 +292,7 @@ module Aireview
 
     def jira_configured?
       Aireview::Utils.present?(jira_url) &&
-        Aireview::Utils.present?(jira_email) &&
+        Aireview::Utils.present?(jira_login) &&
         Aireview::Utils.present?(jira_token)
     end
 

@@ -24,7 +24,7 @@ MVP-flow:
 - Bundler 2.3.26
 - Personal access token для GitLab
 - API-ключ удалённого LLM-провайдера; для локальной Ollama ключ не нужен
-- Опционально — API-токен Jira
+- Опционально — логин и пароль Jira
 
 ## Configuration
 
@@ -35,7 +35,7 @@ Generate- и Critique-модели задаются явно:
 GITLAB_URL=https://gitlab.company.com
 GITLAB_TOKEN=glpat-xxx
 JIRA_URL=https://company.atlassian.net
-JIRA_EMAIL=user@company.com
+JIRA_LOGIN=user
 JIRA_TOKEN=xxx
 GEMINI_API_KEY=xxx
 LLM_PROVIDER=gemini
