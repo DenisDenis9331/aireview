@@ -68,6 +68,24 @@ RSpec.describe Aireview::Config do
       end
     end
 
+    it 'loads Jira login from environment' do
+      Dir.mktmpdir do |dir|
+        config = described_class.load(
+          cwd: dir,
+          env: {
+            'JIRA_URL' => 'https://jira.company.com',
+            'JIRA_LOGIN' => 'user',
+            'JIRA_PASSWORD' => 'password'
+          },
+          logger: Logger.new(nil)
+        )
+
+        expect(config.jira_login).to eq('user')
+        expect(config.jira_password).to eq('password')
+        expect(config.jira_configured?).to be(true)
+      end
+    end
+
     it 'includes cassette paths in default secret files' do
       Dir.mktmpdir do |dir|
         config = described_class.load(

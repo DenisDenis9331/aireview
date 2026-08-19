@@ -5,6 +5,9 @@
 кандидатов в замечания, второй критикует их и отбрасывает слабые или
 невалидные.
 
+Утилита поддерживает только self-hosted GitLab и self-hosted Jira. GitLab.com
+и Jira Cloud не поддерживаются.
+
 MVP-flow:
 
 1. Принимает URL merge request'а GitLab.
@@ -24,7 +27,7 @@ MVP-flow:
 - Bundler 2.3.26
 - Personal access token для GitLab
 - API-ключ удалённого LLM-провайдера; для локальной Ollama ключ не нужен
-- Опционально — API-токен Jira
+- Опционально — логин и пароль Jira
 
 ## Configuration
 
@@ -34,9 +37,9 @@ Generate- и Critique-модели задаются явно:
 ```bash
 GITLAB_URL=https://gitlab.company.com
 GITLAB_TOKEN=glpat-xxx
-JIRA_URL=https://company.atlassian.net
-JIRA_EMAIL=user@company.com
-JIRA_TOKEN=xxx
+JIRA_URL=https://jira.company.com
+JIRA_LOGIN=user
+JIRA_PASSWORD=xxx
 GEMINI_API_KEY=xxx
 LLM_PROVIDER=gemini
 LLM_TEMPERATURE=0
