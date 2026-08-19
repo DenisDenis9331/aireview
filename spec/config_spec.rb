@@ -75,12 +75,13 @@ RSpec.describe Aireview::Config do
           env: {
             'JIRA_URL' => 'https://jira.company.com',
             'JIRA_LOGIN' => 'user',
-            'JIRA_TOKEN' => 'password'
+            'JIRA_PASSWORD' => 'password'
           },
           logger: Logger.new(nil)
         )
 
         expect(config.jira_login).to eq('user')
+        expect(config.jira_password).to eq('password')
         expect(config.jira_configured?).to be(true)
       end
     end

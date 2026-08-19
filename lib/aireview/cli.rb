@@ -161,7 +161,7 @@ module Aireview
       JiraClient.new(
         base_url: config.jira_url,
         login: config.jira_login,
-        token: config.jira_token,
+        password: config.jira_password,
         logger: @logger
       ).fetch_issue(key)
     rescue Aireview::Error => e
