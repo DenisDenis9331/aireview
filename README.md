@@ -97,6 +97,41 @@ GEMINI_API_KEY=xxx
 LLM_TIMEOUT=300
 ```
 
+Проверенные модели Ollama:
+
+- `qwen2.5-coder:7b`
+- `qwen2.5-coder:14b`
+- `qwen3:8b`
+- `qwen3:14b`
+- `gpt-oss:20b`
+
+Размер контекстного окна настраивается на машине, где запущена Ollama. Для
+постоянной настройки в Linux откройте конфигурацию сервиса:
+
+```bash
+sudo systemctl edit ollama.service
+```
+
+Добавьте настройку:
+
+```ini
+[Service]
+Environment="OLLAMA_CONTEXT_LENGTH=8192"
+```
+
+Затем примените её и перезапустите Ollama:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart ollama
+```
+
+При ручном запуске сервера контекст можно задать только для текущего процесса:
+
+```bash
+OLLAMA_CONTEXT_LENGTH=8192 ollama serve
+```
+
 Для локальной Ollama API-ключ не требуется. Провайдеры можно поменять местами,
 изменив `LLM_GENERATE_PROVIDER`, `LLM_CRITIQUE_PROVIDER` и соответствующие
 модели. Чтобы обе стадии работали локально, укажите `ollama` в обеих
