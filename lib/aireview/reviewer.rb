@@ -81,12 +81,19 @@ module Aireview
       temperature = options[:temperature]
       @logger.info("LLM #{stage} request started (model=#{model}, temperature=#{temperature})")
       chat = build_chat(context: context, stage: stage, model: model, provider: options[:provider])
+      chat = configure_reasoning(chat: chat, model: model, provider: options[:provider])
         .with_temperature(temperature.to_f)
         .with_schema(options[:schema])
       chat.with_instructions(system)
       response = Timeout.timeout(@config.llm_timeout.to_f) { chat.ask(user) }
       @logger.info("LLM #{stage} request completed (model=#{model})")
       response
+    end
+
+    def configure_reasoning(chat:, model:, provider:)
+      return chat unless provider == 'ollama' && model.start_with?('gpt-oss:')
+
+      chat.with_thinking(effort: :low)
     end
 
     def build_chat(context:, stage:, model:, provider:)
