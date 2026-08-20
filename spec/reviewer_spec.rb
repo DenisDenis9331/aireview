@@ -90,6 +90,9 @@ RSpec.describe Aireview::Reviewer do
       allow(context).to receive(:chat)
         .with(model: 'gemini-3.6-flash', provider: anything, assume_model_exists: true)
         .and_return(generate_chat)
+      allow(context).to receive(:chat)
+        .with(model: 'gpt-oss:20b', provider: anything)
+        .and_return(critique_chat)
       context_configs << context_config
       contexts << context
       context
@@ -100,6 +103,7 @@ RSpec.describe Aireview::Reviewer do
     allow(generate_chat).to receive(:with_instructions).with('system prompt').and_return(generate_chat)
     allow(generate_chat).to receive(:ask).with('user prompt').and_return(generate_response)
     allow(critique_chat).to receive(:with_temperature).with(0.0).and_return(critique_chat)
+    allow(critique_chat).to receive(:with_thinking).with(effort: :low).and_return(critique_chat)
     allow(critique_chat).to receive(:with_schema).with(Aireview::CritiqueOutputSchema).and_return(critique_chat)
     allow(critique_chat).to receive(:with_instructions).with('system prompt').and_return(critique_chat)
     allow(critique_chat).to receive(:ask).with('user prompt').and_return(critique_response)
@@ -339,6 +343,20 @@ RSpec.describe Aireview::Reviewer do
       expect(context_configs.first.openai_api_key).to eq(global_ruby_config.openai_api_key)
       expect(context_configs.first.openai_api_base).to eq(global_ruby_config.openai_api_base)
       expect(config).not_to have_received(:provider_api_key).with('ollama')
+    end
+  end
+
+  context 'with an Ollama gpt-oss model' do
+    let(:critique_provider) { 'ollama' }
+
+    it 'limits reasoning so structured output is not exhausted by thinking tokens' do
+      allow(config).to receive(:critique_model).and_return('gpt-oss:20b')
+      reviewer = described_class.new(config: config, logger: logger)
+
+      reviewer.critique(system_prompt: 'system prompt', user_prompt: 'user prompt')
+
+      expect(critique_chat).to have_received(:with_thinking).with(effort: :low)
+      expect(critique_chat).to have_received(:with_schema).with(Aireview::CritiqueOutputSchema)
     end
   end
 
