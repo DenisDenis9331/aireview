@@ -1,10 +1,11 @@
+# frozen_string_literal: true
 require 'base64'
 require 'json'
 require_relative 'utils'
 
 module Aireview
   class JiraClient
-    ISSUE_KEY = /\b([A-Z][A-Z0-9]+-\d+)\b/.freeze
+    ISSUE_KEY = /\b([A-Z][A-Z0-9]+-\d+)\b/
     OPEN_TIMEOUT = 10
     READ_TIMEOUT = 30
 
@@ -13,12 +14,12 @@ module Aireview
       match && match[1]
     end
 
-    def initialize(base_url:, email:, token:, logger: Logger.new($stderr))
+    def initialize(base_url:, login:, password:, logger: Logger.new($stderr))
       require 'faraday'
 
       raise ConfigError, 'Jira base URL is required' if Aireview::Utils.blank?(base_url)
-      raise ConfigError, 'Jira email is required' if Aireview::Utils.blank?(email)
-      raise ConfigError, 'Jira token is required' if Aireview::Utils.blank?(token)
+      raise ConfigError, 'Jira login is required' if Aireview::Utils.blank?(login)
+      raise ConfigError, 'Jira password is required' if Aireview::Utils.blank?(password)
 
       @logger = logger
       @connection = Faraday.new(url: base_url) do |builder|
@@ -27,7 +28,7 @@ module Aireview
         builder.options.timeout = READ_TIMEOUT
         builder.adapter Faraday.default_adapter
       end
-      @authorization = "Basic #{Base64.strict_encode64("#{email}:#{token}")}"
+      @authorization = "Basic #{Base64.strict_encode64("#{login}:#{password}")}"
     end
 
     def fetch_issue(key)

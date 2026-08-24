@@ -5,6 +5,9 @@
 кандидатов в замечания, второй критикует их и отбрасывает слабые или
 невалидные.
 
+Утилита поддерживает только self-hosted GitLab и self-hosted Jira. GitLab.com
+и Jira Cloud не поддерживаются.
+
 MVP-flow:
 
 1. Принимает URL merge request'а GitLab.
@@ -23,8 +26,8 @@ MVP-flow:
 - Ruby 3.1.3
 - Bundler 2.3.26
 - Personal access token для GitLab
-- API-ключ провайдера
-- Опционально — API-токен Jira
+- API-ключ удалённого LLM-провайдера; для локальной Ollama ключ не нужен
+- Опционально — логин и пароль Jira
 
 ## Configuration
 
@@ -34,33 +37,113 @@ Generate- и Critique-модели задаются явно:
 ```bash
 GITLAB_URL=https://gitlab.company.com
 GITLAB_TOKEN=glpat-xxx
-JIRA_URL=https://company.atlassian.net
-JIRA_EMAIL=user@company.com
-JIRA_TOKEN=xxx
+JIRA_URL=https://jira.company.com
+JIRA_LOGIN=user
+JIRA_PASSWORD=xxx
 GEMINI_API_KEY=xxx
 LLM_PROVIDER=gemini
 LLM_TEMPERATURE=0
 LLM_TIMEOUT=60
 LLM_HTTP_PROXY=http://127.0.0.1:8888
+LLM_GENERATE_PROVIDER=gemini
 LLM_GENERATE_MODEL=gemini-2.5-pro
 LLM_GENERATE_TEMPERATURE=0.3
+LLM_CRITIQUE_PROVIDER=gemini
 LLM_CRITIQUE_MODEL=gemini-2.5-flash
 LLM_CRITIQUE_TEMPERATURE=0
 REVIEW_LANGUAGE=ru
 ```
 
-Для других провайдеров используйте соответствующий ключ, например
-`OPENAI_API_KEY`, `OPENROUTER_API_KEY` или `ANTHROPIC_API_KEY`, и задайте оба
-параметра — `LLM_GENERATE_MODEL` и `LLM_CRITIQUE_MODEL`. Эти две настройки
-моделей обязательны и могут указывать на одну и ту же модель.
+На текущий момент поддерживаются только провайдеры `gemini` и `ollama`.
+Провайдеры и модели каждой стадии задаются через `LLM_GENERATE_PROVIDER`,
+`LLM_GENERATE_MODEL`, `LLM_CRITIQUE_PROVIDER` и `LLM_CRITIQUE_MODEL`.
+`LLM_PROVIDER` остаётся общим значением по умолчанию, если отдельный провайдер
+стадии не указан.
 
 Если через прокси нужно гонять только LLM-трафик, задайте `LLM_HTTP_PROXY` или
 `llm.http_proxy`. Это настраивает только RubyLLM; запросы к GitLab и Jira
 продолжают идти напрямую.
 
+### Локальная Ollama
+
+Установите Ollama по [официальной инструкции](https://docs.ollama.com/quickstart),
+затем загрузите локальную модель
+[`qwen2.5-coder:7b`](https://ollama.com/library/qwen2.5-coder:7b):
+
+```bash
+ollama pull qwen2.5-coder:7b
+```
+
+Если сервис не запустился автоматически, запустите его отдельно и оставьте
+работать во время ревью:
+
+```bash
+ollama serve
+```
+
+Для качественного результата используйте для Critique более мощную модель,
+чем для Generate. Например, для генерации через локальную Ollama и критики
+через Gemini настройте `.env`:
+
+```bash
+LLM_GENERATE_PROVIDER=ollama
+LLM_GENERATE_MODEL=qwen2.5-coder:7b
+LLM_GENERATE_TEMPERATURE=0
+LLM_CRITIQUE_PROVIDER=gemini
+LLM_CRITIQUE_MODEL=gemini-3.7-flash
+LLM_CRITIQUE_TEMPERATURE=0
+OLLAMA_API_BASE=http://localhost:11434/v1
+GEMINI_API_KEY=xxx
+LLM_TIMEOUT=300
+```
+
+Проверенные модели Ollama:
+
+- `qwen2.5-coder:7b`
+- `qwen2.5-coder:14b`
+- `qwen3:8b`
+- `qwen3:14b`
+- `gpt-oss:20b`
+
+Размер контекстного окна настраивается на машине, где запущена Ollama. Для
+постоянной настройки в Linux откройте конфигурацию сервиса:
+
+```bash
+sudo systemctl edit ollama.service
+```
+
+Добавьте настройку:
+
+```ini
+[Service]
+Environment="OLLAMA_CONTEXT_LENGTH=8192"
+```
+
+Затем примените её и перезапустите Ollama:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart ollama
+```
+
+При ручном запуске сервера контекст можно задать только для текущего процесса:
+
+```bash
+OLLAMA_CONTEXT_LENGTH=8192 ollama serve
+```
+
+Для локальной Ollama API-ключ не требуется. Провайдеры можно поменять местами,
+изменив `LLM_GENERATE_PROVIDER`, `LLM_CRITIQUE_PROVIDER` и соответствующие
+модели. Чтобы обе стадии работали локально, укажите `ollama` в обеих
+переменных провайдера. Адрес с `/v1` соответствует
+[конфигурации Ollama в RubyLLM](https://rubyllm.com/configuration/#provider-configuration).
+`LLM_TIMEOUT` задаёт время ожидания каждого LLM-запроса в секундах; для
+медленной локальной модели его можно увеличить.
+
 Проектные правила живут в `.aireview.yml`. В YAML параметры `generate.model`
 и `critique.model` для каждой стадии обязательны и не наследуются от базовых
-настроек `llm`:
+настроек `llm`. Параметр `llm.provider` используется по умолчанию, если
+`generate.provider` или `critique.provider` не задан:
 
 ```yaml
 ignore_paths:
@@ -92,16 +175,20 @@ review_instructions: |
   - отсутствие тестов для новой логики
   Игнорируй стилистику — для этого есть линтеры.
 
+ollama_api_base: http://localhost:11434/v1
+
 llm:
   provider: gemini
   temperature: 0
   timeout: 60
   http_proxy: http://127.0.0.1:8888
   generate:
+    provider: gemini
     model: gemini-2.5-pro
     temperature: 0.3
   critique:
-    model: gemini-2.5-flash
+    provider: ollama
+    model: qwen2.5-coder:7b
     temperature: 0
 ```
 

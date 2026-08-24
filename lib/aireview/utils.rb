@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 module Aireview
   module Utils
     module_function
