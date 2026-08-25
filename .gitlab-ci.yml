@@ -1,0 +1,25 @@
+variables:
+  GIT_STRATEGY: clone
+  GIT_DEPTH: 0
+
+stages:
+  - check
+
+.check:
+  stage: check
+  only:
+    - merge_requests
+  before_script:
+    - docker build --tag "aireview-ci:${CI_JOB_ID}" .
+  after_script:
+    - docker image rm "aireview-ci:${CI_JOB_ID}" || true
+
+rubocop:
+  extends: .check
+  script:
+    - docker run --rm --entrypoint bundle "aireview-ci:${CI_JOB_ID}" _2.3.26_ exec rubocop
+
+rspec:
+  extends: .check
+  script:
+    - docker run --rm --entrypoint bundle "aireview-ci:${CI_JOB_ID}" _2.3.26_ exec rspec

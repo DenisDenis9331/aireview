@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 module Aireview
   class Error < StandardError; end
   class ConfigError < Error; end

@@ -1,8 +1,9 @@
+# frozen_string_literal: true
 require_relative 'utils'
 
 module Aireview
   class DiffFetcher
-    DIFF_UNAVAILABLE = '[DIFF_NOT_AVAILABLE]'.freeze
+    DIFF_UNAVAILABLE = '[DIFF_NOT_AVAILABLE]'
 
     def initialize(ignore_paths:, logger: Logger.new($stderr))
       @ignore_paths = Array(ignore_paths).compact

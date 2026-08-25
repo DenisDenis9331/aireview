@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative 'lib/aireview/version'
 
 Gem::Specification.new do |spec|
@@ -17,4 +18,5 @@ Gem::Specification.new do |spec|
   spec.executables = ['aireview']
   spec.require_paths = ['lib']
   spec.required_ruby_version = '>= 3.1.3', '< 3.2'
+  spec.metadata['rubygems_mfa_required'] = 'true'
 end

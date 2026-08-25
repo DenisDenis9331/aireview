@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative 'utils'
 require_relative 'secret_scrubber'
 
@@ -33,7 +34,7 @@ module Aireview
     end
 
     def build_critique_prompt(merge_request:, changes_text:, candidates_json:, jira_issue: nil)
-      user = +"#{user_prompt(merge_request: merge_request, changes_text: changes_text, jira_issue: jira_issue)}\n\n"
+      user = "#{user_prompt(merge_request: merge_request, changes_text: changes_text, jira_issue: jira_issue)}\n\n"
       user << "Candidates JSON from Generate:\n#{scrub_text(candidates_json)}"
 
       {
@@ -57,26 +58,33 @@ module Aireview
     def user_prompt(merge_request:, changes_text:, jira_issue:)
       truncated_changes = truncate_changes(scrub_text(changes_text))
 
-      sections = []
-      sections << "MR: #{scrub_text(merge_request['title'])}"
-      sections << "Author: #{scrub_text(merge_request.dig('author', 'name'))}"
-      sections << "Branch: #{scrub_text(merge_request['source_branch'])} -> #{scrub_text(merge_request['target_branch'])}"
-      sections << "Description:\n#{scrub_optional_text(merge_request['description'])}"
-
-      if jira_issue
-        jira_section = +"Jira task (#{scrub_text(jira_issue['key'])}):\n"
-        jira_section << "Summary: #{scrub_text(jira_issue['summary'])}\n"
-        jira_section << "Description:\n#{scrub_optional_text(jira_issue['description'])}"
-
-        if jira_issue['comments'] && !jira_issue['comments'].empty?
-          jira_section << "\nRecent comments:\n#{jira_issue['comments'].map { |comment| scrub_text(comment) }.join("\n")}"
-        end
-
-        sections << jira_section
-      end
-
+      sections = merge_request_sections(merge_request)
+      sections << jira_section(jira_issue) if jira_issue
       sections << "Changes:\n#{truncated_changes}"
       sections.join("\n\n")
+    end
+
+    def merge_request_sections(merge_request)
+      source_branch = scrub_text(merge_request['source_branch'])
+      target_branch = scrub_text(merge_request['target_branch'])
+
+      [
+        "MR: #{scrub_text(merge_request['title'])}",
+        "Author: #{scrub_text(merge_request.dig('author', 'name'))}",
+        "Branch: #{source_branch} -> #{target_branch}",
+        "Description:\n#{scrub_optional_text(merge_request['description'])}"
+      ]
+    end
+
+    def jira_section(jira_issue)
+      section = "Jira task (#{scrub_text(jira_issue['key'])}):\n"
+      section << "Summary: #{scrub_text(jira_issue['summary'])}\n"
+      section << "Description:\n#{scrub_optional_text(jira_issue['description'])}"
+
+      comments = jira_issue['comments']
+      return section unless comments && !comments.empty?
+
+      section << "\nRecent comments:\n#{comments.map { |comment| scrub_text(comment) }.join("\n")}"
     end
 
     def truncate_changes(changes_text)

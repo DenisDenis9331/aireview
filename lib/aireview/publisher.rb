@@ -1,6 +1,7 @@
+# frozen_string_literal: true
 module Aireview
   class Publisher
-    PREFIX = '**aireview review**'.freeze
+    PREFIX = '**aireview review**'
 
     def initialize(gitlab_client:, logger: Logger.new($stderr))
       @gitlab_client = gitlab_client
