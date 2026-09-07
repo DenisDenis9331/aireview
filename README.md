@@ -343,7 +343,7 @@ aireview:
 git switch master
 git pull
 git tag 0.1.1
-git push origin 0.1.1
+git push upstream 0.1.1
 ```
 
 Пайплайн автоматически соберёт и отправит в registry
