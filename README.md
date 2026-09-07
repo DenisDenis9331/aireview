@@ -46,10 +46,10 @@ LLM_TEMPERATURE=0
 LLM_TIMEOUT=60
 LLM_HTTP_PROXY=http://127.0.0.1:8888
 LLM_GENERATE_PROVIDER=gemini
-LLM_GENERATE_MODEL=gemini-2.5-pro
+LLM_GENERATE_MODEL=gemini-3.7-flash
 LLM_GENERATE_TEMPERATURE=0.3
 LLM_CRITIQUE_PROVIDER=gemini
-LLM_CRITIQUE_MODEL=gemini-2.5-flash
+LLM_CRITIQUE_MODEL=gemini-3.8-flash
 LLM_CRITIQUE_TEMPERATURE=0
 REVIEW_LANGUAGE=ru
 ```
@@ -90,7 +90,7 @@ LLM_GENERATE_PROVIDER=ollama
 LLM_GENERATE_MODEL=qwen2.5-coder:7b
 LLM_GENERATE_TEMPERATURE=0
 LLM_CRITIQUE_PROVIDER=gemini
-LLM_CRITIQUE_MODEL=gemini-3.7-flash
+LLM_CRITIQUE_MODEL=gemini-3.8-flash
 LLM_CRITIQUE_TEMPERATURE=0
 OLLAMA_API_BASE=http://localhost:11434/v1
 GEMINI_API_KEY=xxx
@@ -184,7 +184,7 @@ llm:
   http_proxy: http://127.0.0.1:8888
   generate:
     provider: gemini
-    model: gemini-2.5-pro
+    model: gemini-3.7-flash
     temperature: 0.3
   critique:
     provider: ollama
@@ -199,8 +199,8 @@ bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project
 bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --post
 bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --no-jira
 bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --dry-run --verbose
-bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --generate-model gemini-2.5-pro --critique-model gemini-2.5-flash
-bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --generate-model gemini-2.5-pro --generate-temperature 0.3 --critique-model gemini-2.5-flash --critique-temperature 0
+bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --generate-model gemini-3.7-flash --critique-model gemini-3.8-flash
+bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --generate-model gemini-3.7-flash --generate-temperature 0.3 --critique-model gemini-3.8-flash --critique-temperature 0
 bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --no-critique
 ```
 
@@ -235,8 +235,8 @@ aireview:
     MR_URL: "$CI_MERGE_REQUEST_PROJECT_URL/-/merge_requests/$CI_MERGE_REQUEST_IID"
     REVIEW_LANGUAGE: "ru"
     LLM_PROVIDER: "gemini"
-    LLM_GENERATE_MODEL: "gemini-2.5-pro"
-    LLM_CRITIQUE_MODEL: "gemini-2.5-flash"
+    LLM_GENERATE_MODEL: "gemini-3.7-flash"
+    LLM_CRITIQUE_MODEL: "gemini-3.8-flash"
     LLM_TIMEOUT: "60"
     LLM_HTTP_PROXY: "http://127.0.0.1:8888"
   script:
@@ -257,6 +257,99 @@ aireview:
 указывайте на него `LLM_HTTP_PROXY`. Это позволяет не задавать глобальные
 `https_proxy`/`no_proxy`, так что GitLab и Jira остаются на прямых
 соединениях, а RubyLLM ходит через туннель.
+
+### Раннеры с shell executor
+
+На раннерах с `shell`-executor'ом (как в `gitlab.railsc.ru`) секция `image:`
+не работает — джоб выполняется прямо на хосте раннера. В этом случае образ
+`aireview` собирается и публикуется в общий registry, а джоб проекта просто
+запускает его через `docker run`:
+
+```yaml
+stages:
+  - review
+
+aireview:
+  stage: review
+  only:
+    - merge_requests
+  variables:
+    AIREVIEW_IMAGE: "index.exp.railsc.ru/apress/aireview:latest"
+    GITLAB_TOKEN: "$AIREVIEW_GITLAB_TOKEN"
+  allow_failure: true
+  interruptible: true
+  script:
+    - >
+       if echo "$CI_MERGE_REQUEST_TITLE" | grep -q "\[skip review\]"; then
+         echo "Skipping aireview due to [skip review] tag in merge request title"
+         exit 0
+       fi
+    - docker pull "$AIREVIEW_IMAGE"
+    - >
+       docker run --rm
+       --network host
+       -e "GITLAB_URL=$CI_SERVER_URL"
+       -e GITLAB_TOKEN
+       -e GEMINI_API_KEY
+       -e LLM_HTTP_PROXY
+       -e LLM_TIMEOUT
+       -e JIRA_URL
+       -e JIRA_LOGIN
+       -e JIRA_PASSWORD
+       -v "$(pwd)/.aireview.yml:/app/.aireview.yml:ro"
+       "$AIREVIEW_IMAGE"
+       review "$CI_MERGE_REQUEST_PROJECT_URL/-/merge_requests/$CI_MERGE_REQUEST_IID"
+       --post --verbose
+```
+
+Что здесь важно:
+
+- `.aireview.yml` монтируется отдельным файлом в `/app`, а не подменяет весь
+  рабочий каталог: в образе по этому пути лежит сам гем. Модели и правила
+  проекта живут в этом файле, а в переменные CI/CD выносятся только секреты и
+  адрес прокси.
+- Секреты передаются в контейнер по имени (`-e GITLAB_TOKEN`), а не как
+  `-e "GITLAB_TOKEN=$..."`. На shell-раннере значение из второй формы попадает
+  в argv процесса `docker` и видно в `ps` любому соседнему джобу на том же
+  хосте.
+- `--network host` нужен, чтобы контейнер видел `wireproxy`, поднятый на
+  `127.0.0.1` хоста раннера.
+- `allow_failure: true` оставляет ревью необязательным: недоступный LLM не
+  должен блокировать merge request.
+- `--post` публикует ревью комментарием в MR; без него результат остаётся
+  только в логе джоба.
+- Токен в `GITLAB_TOKEN` должен иметь scope `api`: он и читает дифф, и пишет
+  комментарий.
+
+Про доступ к секретам: пайплайн merge request'а выполняет `.gitlab-ci.yml` из
+ветки MR, поэтому автор ветки может подменить джоб и вытащить любую переменную,
+доступную пайплайну. Маскирование от этого не спасает. Отсюда правила:
+
+- заводите переменные на уровне проекта, а не группы: иначе ключ, доступный
+  ревьюеру в одном проекте, утекает через любой другой проект группы;
+- в `GITLAB_TOKEN` кладите отдельный project access token с ролью Reporter и
+  scope `api`, выданный только на этот проект, а не личный или групповой токен;
+- для `GEMINI_API_KEY` заводите отдельный ключ с собственной квотой, чтобы его
+  компрометация не задевала остальные интеграции;
+- protected-переменные надёжнее, но пайплайнам из обычных feature-веток они
+  недоступны, так что для ревью на каждый MR они не подходят.
+
+### Выпуск образа
+
+1) Внести правки и смержить их в `master`
+2) Создать и отправить тег с версией образа, например:
+
+```
+git switch master
+git pull
+git tag 0.1.1
+git push origin 0.1.1
+```
+
+Пайплайн автоматически соберёт и отправит в registry
+`index.exp.railsc.ru/apress/aireview:<тег>` и обновит для него тег `latest`.
+Тег `latest` обновляется каждым релизом, поэтому в подключённых проектах
+надёжнее указывать конкретную версию в переменной `AIREVIEW_IMAGE`.
 
 ## Docker
 

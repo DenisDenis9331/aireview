@@ -23,5 +23,5 @@ review_instructions: |
 
 llm:
   provider: gemini
-  model: gemini-2.5-flash
+  model: gemini-3.7-flash
   temperature: 0.2
