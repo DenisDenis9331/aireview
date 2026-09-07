@@ -20,8 +20,11 @@ module Aireview
       'test/fixtures/cassettes/**/*.yml'
     ].freeze
 
+    REVIEW_MODES = %w[update once].freeze
+
     DEFAULTS = {
       'review_language' => 'ru',
+      'review_mode' => 'update',
       'ignore_paths' => [],
       'secret_patterns' => [],
       'secret_files' => DEFAULT_SECRET_FILES,
@@ -43,6 +46,7 @@ module Aireview
       'jira_login' => 'JIRA_LOGIN',
       'jira_password' => 'JIRA_PASSWORD',
       'review_language' => 'REVIEW_LANGUAGE',
+      'review_mode' => 'REVIEW_MODE',
       'llm_api_base' => 'LLM_API_BASE',
       'ollama_api_base' => 'OLLAMA_API_BASE',
       'llm_http_proxy' => 'LLM_HTTP_PROXY'
@@ -264,6 +268,16 @@ module Aireview
 
     def review_language
       @data['review_language'] || DEFAULTS['review_language']
+    end
+
+    # update — обновляем свою заметку, когда дифф или настройки изменились,
+    # once — ревьюим один раз автоматически; Retry джоба обновляет ревью при изменениях.
+    def review_mode
+      mode = (@data['review_mode'] || DEFAULTS['review_mode']).to_s
+      return mode if REVIEW_MODES.include?(mode)
+
+      @logger.warn("Unknown review_mode #{mode.inspect}, using #{DEFAULTS['review_mode']}")
+      DEFAULTS['review_mode']
     end
 
     def ignore_paths

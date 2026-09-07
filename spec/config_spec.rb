@@ -19,10 +19,10 @@ RSpec.describe Aireview::Config do
             llm:
               temperature: 0.1
               generate:
-                model: gemini-2.5-pro
+                model: gemini-3.7-flash
                 temperature: 0.3
               critique:
-                model: gemini-2.5-flash
+                model: gemini-3.8-flash
                 temperature: 0
           YAML
         )
@@ -44,8 +44,8 @@ RSpec.describe Aireview::Config do
         expect(config.llm_provider).to eq('gemini')
         expect(config.generate_provider).to eq('gemini')
         expect(config.critique_provider).to eq('gemini')
-        expect(config.generate_model).to eq('gemini-2.5-pro')
-        expect(config.critique_model).to eq('gemini-2.5-flash')
+        expect(config.generate_model).to eq('gemini-3.7-flash')
+        expect(config.critique_model).to eq('gemini-3.8-flash')
         expect(config.generate_temperature).to eq(0.3)
         expect(config.critique_temperature).to eq(0)
         expect(config.llm_timeout).to eq(45)
@@ -112,7 +112,7 @@ RSpec.describe Aireview::Config do
           env: {
             'LLM_GENERATE_PROVIDER' => 'gemini',
             'LLM_CRITIQUE_PROVIDER' => 'ollama',
-            'LLM_GENERATE_MODEL' => 'gemini-2.5-pro',
+            'LLM_GENERATE_MODEL' => 'gemini-3.7-flash',
             'LLM_CRITIQUE_MODEL' => 'qwen2.5-coder:7b',
             'LLM_GENERATE_TEMPERATURE' => '0.3',
             'LLM_CRITIQUE_TEMPERATURE' => '0'
@@ -122,7 +122,7 @@ RSpec.describe Aireview::Config do
 
         expect(config.generate_provider).to eq('gemini')
         expect(config.critique_provider).to eq('ollama')
-        expect(config.generate_model).to eq('gemini-2.5-pro')
+        expect(config.generate_model).to eq('gemini-3.7-flash')
         expect(config.critique_model).to eq('qwen2.5-coder:7b')
         expect(config.generate_temperature).to eq(0.3)
         expect(config.critique_temperature).to eq(0)
@@ -157,9 +157,9 @@ RSpec.describe Aireview::Config do
             llm:
               http_proxy: http://127.0.0.1:8888
               generate:
-                model: gemini-2.5-pro
+                model: gemini-3.7-flash
               critique:
-                model: gemini-2.5-flash
+                model: gemini-3.8-flash
           YAML
         )
 
@@ -176,7 +176,7 @@ RSpec.describe Aireview::Config do
           <<~YAML
             llm:
               critique:
-                model: gemini-2.5-flash
+                model: gemini-3.8-flash
           YAML
         )
 
@@ -198,7 +198,7 @@ RSpec.describe Aireview::Config do
           <<~YAML
             llm:
               generate:
-                model: gemini-2.5-pro
+                model: gemini-3.7-flash
           YAML
         )
 
@@ -220,9 +220,9 @@ RSpec.describe Aireview::Config do
           <<~YAML
             llm:
               generate:
-                model: gemini-2.5-pro
+                model: gemini-3.7-flash
               critique:
-                model: gemini-2.5-flash
+                model: gemini-3.8-flash
           YAML
         )
 
@@ -259,7 +259,7 @@ RSpec.describe Aireview::Config do
             'LLM_GENERATE_PROVIDER' => 'ollama',
             'LLM_GENERATE_MODEL' => 'qwen2.5-coder:7b',
             'LLM_CRITIQUE_PROVIDER' => 'gemini',
-            'LLM_CRITIQUE_MODEL' => 'gemini-2.5-flash'
+            'LLM_CRITIQUE_MODEL' => 'gemini-3.8-flash'
           },
           logger: Logger.new(nil)
         )

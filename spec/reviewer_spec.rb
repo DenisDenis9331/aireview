@@ -13,9 +13,9 @@ RSpec.describe Aireview::Reviewer do
       ollama_api_base: 'http://localhost:11434/v1',
       llm_http_proxy: 'http://127.0.0.1:8888',
       llm_temperature: 0.2,
-      generate_model: 'gemini-2.5-pro',
+      generate_model: 'gemini-3.7-flash',
       generate_temperature: 0.3,
-      critique_model: 'gemini-2.5-flash-lite',
+      critique_model: 'gemini-3.8-flash',
       critique_temperature: 0,
       llm_timeout: 60
     )
@@ -79,10 +79,10 @@ RSpec.describe Aireview::Reviewer do
       block.call(context_config)
       context = instance_double('RubyLLM::Context')
       allow(context).to receive(:chat)
-        .with(model: 'gemini-2.5-pro', provider: anything)
+        .with(model: 'gemini-3.7-flash', provider: anything)
         .and_return(generate_chat)
       allow(context).to receive(:chat)
-        .with(model: 'gemini-2.5-flash-lite', provider: anything)
+        .with(model: 'gemini-3.8-flash', provider: anything)
         .and_return(critique_chat)
       allow(context).to receive(:chat)
         .with(model: 'gemini-3.6-flash', provider: anything)
@@ -127,7 +127,7 @@ RSpec.describe Aireview::Reviewer do
     expect(result).to eq('generate body')
     expect(contexts.first)
       .to have_received(:chat)
-      .with(model: 'gemini-2.5-pro', provider: :gemini)
+      .with(model: 'gemini-3.7-flash', provider: :gemini)
     expect(generate_chat).to have_received(:with_temperature).with(0.3)
     expect(generate_chat).to have_received(:with_schema).with(Aireview::GenerateOutputSchema)
   end
@@ -139,7 +139,7 @@ RSpec.describe Aireview::Reviewer do
     expect(result).to eq('critique body')
     expect(contexts.first)
       .to have_received(:chat)
-      .with(model: 'gemini-2.5-flash-lite', provider: :gemini)
+      .with(model: 'gemini-3.8-flash', provider: :gemini)
     expect(critique_chat).to have_received(:with_temperature).with(0.0)
     expect(critique_chat).to have_received(:with_schema).with(Aireview::CritiqueOutputSchema)
   end
@@ -189,8 +189,8 @@ RSpec.describe Aireview::Reviewer do
 
     reviewer.generate(system_prompt: 'system prompt', user_prompt: 'user prompt')
 
-    expect(log_output.string).to include('LLM generate request started (model=gemini-2.5-pro, temperature=0.3)')
-    expect(log_output.string).to include('LLM generate request completed (model=gemini-2.5-pro)')
+    expect(log_output.string).to include('LLM generate request started (model=gemini-3.7-flash, temperature=0.3)')
+    expect(log_output.string).to include('LLM generate request completed (model=gemini-3.7-flash)')
   end
 
   context 'when the LLM service is temporarily unavailable' do
@@ -237,7 +237,7 @@ RSpec.describe Aireview::Reviewer do
       expect(attempts).to eq(2)
       expect(reviewer).to have_received(:sleep).with(11.0).once
       expect(log_output.string).to include('LLM generate request will sleep 11.0s before retry (provider retry hint 5.5s, multiplier 2.00x)')
-      expect(log_output.string).to include('LLM generate retry wait completed after 11.0s (model=gemini-2.5-pro)')
+      expect(log_output.string).to include('LLM generate retry wait completed after 11.0s (model=gemini-3.7-flash)')
     end
 
     it 'parses retry-after hints written in seconds' do
@@ -317,10 +317,10 @@ RSpec.describe Aireview::Reviewer do
 
           expect(contexts.first)
             .to have_received(:chat)
-            .with(model: 'gemini-2.5-pro', provider: generate_value.to_sym)
+            .with(model: 'gemini-3.7-flash', provider: generate_value.to_sym)
           expect(contexts.last)
             .to have_received(:chat)
-            .with(model: 'gemini-2.5-flash-lite', provider: critique_value.to_sym)
+            .with(model: 'gemini-3.8-flash', provider: critique_value.to_sym)
           expect(generate_chat).to have_received(:with_schema).with(Aireview::GenerateOutputSchema)
           expect(critique_chat).to have_received(:with_schema).with(Aireview::CritiqueOutputSchema)
           expect(global_ruby_config.to_h).to eq(global_config_before)
@@ -338,7 +338,7 @@ RSpec.describe Aireview::Reviewer do
 
       expect(contexts.first)
         .to have_received(:chat)
-        .with(model: 'gemini-2.5-pro', provider: :ollama)
+        .with(model: 'gemini-3.7-flash', provider: :ollama)
       expect(context_configs.first.ollama_api_base).to eq('http://localhost:11434/v1')
       expect(context_configs.first.openai_api_key).to eq(global_ruby_config.openai_api_key)
       expect(context_configs.first.openai_api_base).to eq(global_ruby_config.openai_api_base)
