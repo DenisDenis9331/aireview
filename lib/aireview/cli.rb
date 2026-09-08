@@ -3,12 +3,13 @@ require 'securerandom'
 
 module Aireview
   class CLI
-    def self.start(argv, out: $stdout, err: $stderr)
-      new(argv, out: out, err: err).start
+    def self.start(argv, out: $stdout, err: $stderr, env: ENV)
+      new(argv, out: out, err: err, env: env).start
     end
 
-    def initialize(argv, out:, err:)
+    def initialize(argv, out:, err:, env: ENV)
       @argv = argv.dup
+      @env = env
       @out = out
       @err = err
       @run_id = SecureRandom.hex(4)
@@ -62,7 +63,7 @@ module Aireview
     end
 
     def load_review_config(options)
-      config = Config.load(config_path: options[:config], cwd: Dir.pwd, env: ENV, logger: @logger)
+      config = Config.load(config_path: options[:config], cwd: Dir.pwd, env: @env, logger: @logger)
       config = config.with_overrides(
         generate_model: options[:generate_model],
         critique_model: options[:critique_model],
@@ -129,6 +130,9 @@ module Aireview
         return 0
       end
 
+      publication = prepare_publication(pipeline, config, context, options)
+      return 0 if publication == :skip
+
       review = pipeline.run(
         merge_request: context[:merge_request],
         changes_text: context[:changes_text],
@@ -136,18 +140,84 @@ module Aireview
         critique: !options[:no_critique]
       )
 
-      publish_review(review, context) if options[:post]
-
+      # Печатаем до публикации: если публикация не состоится, текст ревью
+      # останется хотя бы в логе джоба.
       @out.puts(review)
+
+      publish_review(review, context, publication) if publication
+
       0
     end
 
-    def publish_review(review, context)
-      Publisher.new(gitlab_client: context[:gitlab_client], logger: @logger).publish(
+    # Поиск прошлого ревью идёт до вызова LLM: иначе запросы тратятся впустую,
+    # даже когда публиковать нечего.
+    def prepare_publication(pipeline, config, context, options)
+      return nil unless options[:post]
+
+      publisher = Publisher.new(gitlab_client: context[:gitlab_client], logger: @logger)
+      prompts = pipeline.dry_run_prompts(
+        merge_request: context[:merge_request],
+        changes_text: context[:changes_text],
+        jira_issue: context[:jira_issue],
+        critique: !options[:no_critique]
+      )
+      key = ReviewMarker.key(prompts: prompts, config: config)
+      existing = publisher.existing_review(
+        project_id: context[:parser_result].project_id,
+        iid: context[:parser_result].iid
+      )
+
+      mode = options[:review_mode] || config.review_mode
+      return :skip if skip_review?(existing, key: key, mode: mode, force: options[:force],
+                                             gitlab_client: context[:gitlab_client])
+
+      {publisher: publisher, existing: existing, key: key}
+    end
+
+    def skip_review?(existing, key:, mode:, force:, gitlab_client:)
+      return false if existing.nil? || force
+
+      up_to_date = existing[:key] == key
+      return false unless up_to_date || (mode == 'once' && !retried_ci_job?(gitlab_client))
+
+      reason = up_to_date ? 'existing review is up to date' : 'merge request already reviewed (review_mode=once)'
+      @out.puts("Review skipped: #{reason}")
+      true
+    end
+
+    def retried_ci_job?(gitlab_client)
+      project_id, job_id = @env.values_at('CI_PROJECT_ID', 'CI_JOB_ID')
+      return false if Aireview::Utils.blank?(project_id) || Aireview::Utils.blank?(job_id)
+
+      gitlab_client.retried_job?(project_id, job_id)
+    end
+
+    def publish_review(review, context, publication)
+      return if merge_request_moved?(context)
+
+      publication[:publisher].publish(
         project_id: context[:parser_result].project_id,
         iid: context[:parser_result].iid,
-        review_body: review
+        review_body: review,
+        key: publication[:key],
+        existing: publication[:existing]
       )
+    end
+
+    # Пока работала LLM, MR мог уехать: новый коммит, перебазирование или смена
+    # целевой ветки. Публиковать ревью неактуального диффа хуже, чем не
+    # публиковать ничего, а ошибку проверки нельзя трактовать как «всё на
+    # месте», поэтому её не глушим.
+    def merge_request_moved?(context)
+      current = context[:gitlab_client].fetch_merge_request(
+        context[:parser_result].project_id,
+        context[:parser_result].iid
+      )
+      return false if ReviewMarker.state(current) == ReviewMarker.state(context[:merge_request])
+
+      @logger.warn("Merge request moved to #{current['sha']} (#{current['target_branch']}) " \
+                   'while review was running; skipping publication')
+      true
     end
 
     def maybe_load_jira_issue(config, merge_request, options)
@@ -175,59 +245,79 @@ module Aireview
         no_jira: false,
         dry_run: false,
         verbose: false,
-        no_critique: false
+        no_critique: false,
+        force: false
       }
 
       OptionParser.new do |parser|
         parser.banner = 'Usage: aireview review <merge_request_url> [options]'
 
-        parser.on('--post', 'Post review back to GitLab merge request') do
-          options[:post] = true
-        end
-
-        parser.on('--generate-model MODEL', 'Override Generate pass model') do |value|
-          options[:generate_model] = value
-        end
-
-        parser.on('--critique-model MODEL', 'Override Critique pass model') do |value|
-          options[:critique_model] = value
-        end
-
-        parser.on('--generate-temperature VALUE', Float, 'Override Generate pass temperature') do |value|
-          options[:generate_temperature] = value
-        end
-
-        parser.on('--critique-temperature VALUE', Float, 'Override Critique pass temperature') do |value|
-          options[:critique_temperature] = value
-        end
-
-        parser.on('--config PATH', 'Path to .aireview.yml') do |value|
-          options[:config] = value
-        end
-
-        parser.on('--no-jira', 'Disable Jira enrichment') do
-          options[:no_jira] = true
-        end
-
-        parser.on('--dry-run', 'Print prompts and skip LLM calls') do
-          options[:dry_run] = true
-        end
-
-        parser.on('--no-critique', 'Skip critique pass and render Generate candidates directly') do
-          options[:no_critique] = true
-        end
-
-        parser.on('--verbose', 'Enable verbose logging') do
-          options[:verbose] = true
-        end
-
-        parser.on('-h', '--help', 'Show help') do
-          @out.puts(parser)
-          raise HelpRequested
-        end
+        add_llm_options(parser, options)
+        add_publication_options(parser, options)
+        add_general_options(parser, options)
       end.parse!(argv)
 
       options
+    end
+
+    def add_llm_options(parser, options)
+      parser.on('--generate-model MODEL', 'Override Generate pass model') do |value|
+        options[:generate_model] = value
+      end
+
+      parser.on('--critique-model MODEL', 'Override Critique pass model') do |value|
+        options[:critique_model] = value
+      end
+
+      parser.on('--generate-temperature VALUE', Float, 'Override Generate pass temperature') do |value|
+        options[:generate_temperature] = value
+      end
+
+      parser.on('--critique-temperature VALUE', Float, 'Override Critique pass temperature') do |value|
+        options[:critique_temperature] = value
+      end
+
+      parser.on('--no-critique', 'Skip critique pass and render Generate candidates directly') do
+        options[:no_critique] = true
+      end
+    end
+
+    def add_publication_options(parser, options)
+      parser.on('--post', 'Post review back to GitLab merge request') do
+        options[:post] = true
+      end
+
+      parser.on('--review-mode MODE', Aireview::Config::REVIEW_MODES,
+                'How to treat an existing review: update or once') do |value|
+        options[:review_mode] = value
+      end
+
+      parser.on('--force', 'Review again even if the merge request was already reviewed') do
+        options[:force] = true
+      end
+    end
+
+    def add_general_options(parser, options)
+      parser.on('--config PATH', 'Path to .aireview.yml') do |value|
+        options[:config] = value
+      end
+
+      parser.on('--no-jira', 'Disable Jira enrichment') do
+        options[:no_jira] = true
+      end
+
+      parser.on('--dry-run', 'Print prompts and skip LLM calls') do
+        options[:dry_run] = true
+      end
+
+      parser.on('--verbose', 'Enable verbose logging') do
+        options[:verbose] = true
+      end
+
+      parser.on('-h', '--help', 'Show help') do
+        @out.puts(parser)
+        raise HelpRequested
+      end
     end
 
     def render_dry_run(dry_run)
@@ -273,6 +363,9 @@ module Aireview
           --critique-temperature VALUE
                            Override Critique pass temperature
           --config PATH    Path to .aireview.yml
+          --review-mode MODE
+                           How to treat an existing review: update (default) or once
+          --force          Review again even if the merge request was already reviewed
           --no-jira        Disable Jira enrichment
           --dry-run        Print prompts without LLM calls
           --no-critique    Skip second LLM critique pass

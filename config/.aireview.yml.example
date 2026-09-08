@@ -8,6 +8,10 @@ secret_patterns:
   - 'api_key\s*=\s*["'\''].*["'\'']'
   - 'SECRET_[A-Z_]+'
 
+# update — обновлять свой комментарий, когда дифф или настройки изменились,
+# once — один раз автоматически; Retry джоба обновляет ревью при изменениях.
+review_mode: update
+
 secret_files:
   - .env
   - .env.*
