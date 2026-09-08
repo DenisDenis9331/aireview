@@ -6,12 +6,14 @@ Gem::Specification.new do |spec|
   spec.version = Aireview::VERSION
   spec.summary = 'Local GitLab merge request review CLI powered by LLMs'
   spec.authors = ['Denis Levenko']
+  spec.license = 'MIT'
   spec.files = Dir.chdir(__dir__) do
     Dir[
       'bin/*',
       'config/**/*',
       'lib/**/*.{rb,txt}',
-      'README.md'
+      'README.md',
+      'LICENSE'
     ]
   end
   spec.bindir = 'bin'
