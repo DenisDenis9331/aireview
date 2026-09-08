@@ -1,38 +1,37 @@
 # aireview
 
-`aireview` — это локальная CLI-утилита для ревью merge request'ов в GitLab с
-помощью LLM. Использует двухпроходный пайплайн ревью: первый проход находит
-кандидатов в замечания, второй критикует их и отбрасывает слабые или
-невалидные.
+`aireview` is a local CLI tool that reviews GitLab merge requests with the help
+of LLMs. It uses a two-pass review pipeline: the first pass finds candidate
+findings, the second one critiques them and drops the weak or invalid ones.
 
-Утилита поддерживает только self-hosted GitLab и self-hosted Jira. GitLab.com
-и Jira Cloud не поддерживаются.
+The tool supports self-hosted GitLab and self-hosted Jira only. GitLab.com and
+Jira Cloud are not supported.
 
-MVP-flow:
+MVP flow:
 
-1. Принимает URL merge request'а GitLab.
-2. Загружает метаданные и изменения MR из GitLab.
-3. Фильтрует игнорируемые пути и вырезает секреты из диффов.
-4. Опционально обогащает промпт контекстом из задачи Jira.
-5. Запускает Generate-проход через RubyLLM, чтобы получить саммари MR и
-   кандидатов в замечания.
-6. Опционально запускает Critique-проход, который возвращает вердикт по
-   каждому id кандидата.
-7. Рендерит финальное markdown-ревью в stdout или постит обратно в merge
+1. Takes a GitLab merge request URL.
+2. Fetches the MR metadata and changes from GitLab.
+3. Filters out ignored paths and scrubs secrets from the diffs.
+4. Optionally enriches the prompt with context from a Jira issue.
+5. Runs the Generate pass through RubyLLM to get an MR summary and candidate
+   findings.
+6. Optionally runs the Critique pass, which returns a verdict for every
+   candidate id.
+7. Renders the final markdown review to stdout or posts it back to the merge
    request.
 
 ## Requirements
 
 - Ruby 3.1.3
 - Bundler 2.3.26
-- Personal access token для GitLab
-- API-ключ удалённого LLM-провайдера; для локальной Ollama ключ не нужен
-- Опционально — логин и пароль Jira
+- A GitLab personal access token
+- An API key for a remote LLM provider; a local Ollama needs no key
+- Optionally, a Jira login and password
 
 ## Configuration
 
-Секреты живут в переменных окружения или в локальном `.env`-файле. В `.env`
-Generate- и Critique-модели задаются явно:
+Secrets live in environment variables or in a local `.env` file. In `.env` the
+Generate and Critique models are set explicitly:
 
 ```bash
 GITLAB_URL=https://gitlab.company.com
@@ -55,36 +54,36 @@ REVIEW_LANGUAGE=ru
 REVIEW_MODE=update
 ```
 
-На текущий момент поддерживаются только провайдеры `gemini` и `ollama`.
-Провайдеры и модели каждой стадии задаются через `LLM_GENERATE_PROVIDER`,
-`LLM_GENERATE_MODEL`, `LLM_CRITIQUE_PROVIDER` и `LLM_CRITIQUE_MODEL`.
-`LLM_PROVIDER` остаётся общим значением по умолчанию, если отдельный провайдер
-стадии не указан.
+At the moment only the `gemini` and `ollama` providers are supported. The
+provider and the model of each stage are set through `LLM_GENERATE_PROVIDER`,
+`LLM_GENERATE_MODEL`, `LLM_CRITIQUE_PROVIDER` and `LLM_CRITIQUE_MODEL`.
+`LLM_PROVIDER` stays the shared default when a stage has no provider of its
+own.
 
-Если через прокси нужно гонять только LLM-трафик, задайте `LLM_HTTP_PROXY` или
-`llm.http_proxy`. Это настраивает только RubyLLM; запросы к GitLab и Jira
-продолжают идти напрямую.
+If only the LLM traffic has to go through a proxy, set `LLM_HTTP_PROXY` or
+`llm.http_proxy`. That configures RubyLLM only; requests to GitLab and Jira
+keep going directly.
 
-### Локальная Ollama
+### Local Ollama
 
-Установите Ollama по [официальной инструкции](https://docs.ollama.com/quickstart),
-затем загрузите локальную модель
+Install Ollama following the
+[official guide](https://docs.ollama.com/quickstart), then pull a local model,
 [`qwen2.5-coder:7b`](https://ollama.com/library/qwen2.5-coder:7b):
 
 ```bash
 ollama pull qwen2.5-coder:7b
 ```
 
-Если сервис не запустился автоматически, запустите его отдельно и оставьте
-работать во время ревью:
+If the service did not start on its own, start it separately and leave it
+running during the review:
 
 ```bash
 ollama serve
 ```
 
-Для качественного результата используйте для Critique более мощную модель,
-чем для Generate. Например, для генерации через локальную Ollama и критики
-через Gemini настройте `.env`:
+For a decent result use a stronger model for Critique than for Generate. For
+example, to generate through a local Ollama and critique through Gemini,
+configure `.env` like this:
 
 ```bash
 LLM_GENERATE_PROVIDER=ollama
@@ -98,7 +97,7 @@ GEMINI_API_KEY=xxx
 LLM_TIMEOUT=300
 ```
 
-Проверенные модели Ollama:
+Ollama models that have been verified:
 
 - `qwen2.5-coder:7b`
 - `qwen2.5-coder:14b`
@@ -106,45 +105,46 @@ LLM_TIMEOUT=300
 - `qwen3:14b`
 - `gpt-oss:20b`
 
-Размер контекстного окна настраивается на машине, где запущена Ollama. Для
-постоянной настройки в Linux откройте конфигурацию сервиса:
+The context window size is configured on the machine that runs Ollama. For a
+permanent setting on Linux, open the service configuration:
 
 ```bash
 sudo systemctl edit ollama.service
 ```
 
-Добавьте настройку:
+Add the setting:
 
 ```ini
 [Service]
 Environment="OLLAMA_CONTEXT_LENGTH=8192"
 ```
 
-Затем примените её и перезапустите Ollama:
+Then apply it and restart Ollama:
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl restart ollama
 ```
 
-При ручном запуске сервера контекст можно задать только для текущего процесса:
+When the server is started by hand, the context can only be set for the current
+process:
 
 ```bash
 OLLAMA_CONTEXT_LENGTH=8192 ollama serve
 ```
 
-Для локальной Ollama API-ключ не требуется. Провайдеры можно поменять местами,
-изменив `LLM_GENERATE_PROVIDER`, `LLM_CRITIQUE_PROVIDER` и соответствующие
-модели. Чтобы обе стадии работали локально, укажите `ollama` в обеих
-переменных провайдера. Адрес с `/v1` соответствует
-[конфигурации Ollama в RubyLLM](https://rubyllm.com/configuration/#provider-configuration).
-`LLM_TIMEOUT` задаёт время ожидания каждого LLM-запроса в секундах; для
-медленной локальной модели его можно увеличить.
+A local Ollama needs no API key. The providers can be swapped by changing
+`LLM_GENERATE_PROVIDER`, `LLM_CRITIQUE_PROVIDER` and the corresponding models.
+To run both stages locally, set `ollama` in both provider variables. The
+address with `/v1` matches the
+[Ollama configuration in RubyLLM](https://rubyllm.com/configuration/#provider-configuration).
+`LLM_TIMEOUT` sets the timeout of every LLM request in seconds; for a slow
+local model it can be raised.
 
-Проектные правила живут в `.aireview.yml`. В YAML параметры `generate.model`
-и `critique.model` для каждой стадии обязательны и не наследуются от базовых
-настроек `llm`. Параметр `llm.provider` используется по умолчанию, если
-`generate.provider` или `critique.provider` не задан:
+Project rules live in `.aireview.yml`. In YAML the `generate.model` and
+`critique.model` settings are required for each stage and are not inherited
+from the base `llm` settings. `llm.provider` is used as the default when
+`generate.provider` or `critique.provider` is not set:
 
 ```yaml
 ignore_paths:
@@ -170,11 +170,11 @@ secret_files:
   - test/fixtures/cassettes/**/*.yml
 
 review_instructions: |
-  Это Rails-проект. Обращай внимание на:
-  - N+1 запросы
+  This is a Rails project. Pay attention to:
+  - N+1 queries
   - strong params
-  - отсутствие тестов для новой логики
-  Игнорируй стилистику — для этого есть линтеры.
+  - missing tests for new logic
+  Ignore style — that is what the linters are for.
 
 ollama_api_base: http://localhost:11434/v1
 
@@ -205,67 +205,70 @@ bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project
 bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --no-critique
 ```
 
-- `--generate-model MODEL` переопределяет модель только для Generate-прохода.
-- `--critique-model MODEL` переопределяет модель только для Critique-прохода.
-- `--generate-temperature VALUE` переопределяет температуру только для Generate-прохода.
-- `--critique-temperature VALUE` переопределяет температуру только для Critique-прохода.
-- `--config PATH` указывает на конкретный `.aireview.yml`.
-- `--no-jira` выключает обогащение из Jira, даже если ключ задачи есть в MR.
-- `--dry-run` печатает настройки LLM и промпт Generate, а также промпт Critique, если не задан `--no-critique`.
-- `--no-critique` пропускает второй проход и рендерит кандидатов Generate напрямую.
-- `--review-mode MODE` задаёт поведение при уже опубликованном ревью: `update` или `once`.
-- `--force` ревьюит заново, даже если ревью для этого состояния MR уже опубликовано.
+- `--generate-model MODEL` overrides the model for the Generate pass only.
+- `--critique-model MODEL` overrides the model for the Critique pass only.
+- `--generate-temperature VALUE` overrides the temperature for the Generate pass only.
+- `--critique-temperature VALUE` overrides the temperature for the Critique pass only.
+- `--config PATH` points at a specific `.aireview.yml`.
+- `--no-jira` turns off the Jira enrichment even when the MR carries an issue key.
+- `--dry-run` prints the LLM settings and the Generate prompt, plus the Critique prompt unless `--no-critique` is given.
+- `--no-critique` skips the second pass and renders the Generate candidates directly.
+- `--review-mode MODE` sets the behaviour when a review has already been published: `update` or `once`.
+- `--force` reviews again even when a review for this state of the MR is already published.
 
-### Один комментарий на merge request
+### A single comment per merge request
 
-С `--post` ревью публикуется не новой заметкой каждый раз, а обновлением
-собственной: в тело комментария вшивается скрытая метка
-`<!-- aireview:key=... -->`, по ней ревью находит свою заметку среди прочих.
-Заметка ищется по всем страницам обсуждения и только среди написанных тем же
-пользователем, под которым работает токен. Если заметки с меткой нет,
-подхватывается своя старая заметка, начинающаяся с `**aireview review**`.
-Её ключ неизвестен: при следующем разрешённом прогоне она обновится и получит
-метку. В режиме `once` старое ревью тоже считается существующим — для его
-обновления нужен Retry. Уже накопившиеся дубликаты автоматически не удаляются.
+With `--post` the review is not published as a new note every time; it updates
+its own note instead. A hidden marker `<!-- aireview:key=... -->` is embedded
+into the comment body, and the review uses it to find its own note among the
+others. The note is looked up across all pages of the discussion and only among
+the ones written by the same user the token belongs to. When there is no note
+with the marker, the tool picks up its own older note that starts with
+`**aireview review**`. Its key is unknown: on the next allowed run it will be
+updated and get a marker. In `once` mode an old review also counts as existing —
+updating it needs a Retry. Duplicates that have already piled up are not
+removed automatically.
 
-Ключ — это хеш уже собранных промптов вместе с провайдерами, моделями и
-температурами обеих стадий. Поэтому в него сами собой попадают дифф, описание
-merge request, контекст задачи из Jira, `review_instructions`, `ignore_paths` и
-язык ответа: изменилось что угодно из этого — ключ другой, ревью пройдёт
-заново.
+The key is a hash of the assembled prompts together with the providers, models
+and temperatures of both stages. So the diff, the merge request description, the
+Jira issue context, `review_instructions`, `ignore_paths` and the response
+language all end up in it on their own: change any of those and the key differs,
+so the review runs again.
 
-Поведение задаётся `review_mode` (или `REVIEW_MODE`, или `--review-mode`):
+The behaviour is set by `review_mode` (or `REVIEW_MODE`, or `--review-mode`):
 
-- `update` (по умолчанию) — если ключ совпал с прошлым ревью, запросы к LLM не
-  отправляются вообще; если дифф или настройки изменились, ревью прогоняется
-  заново и **перезаписывает** прежний комментарий.
-- `once` — ревью делается один раз, и последующие пуши в MR его не повторяют.
-  Чтобы обновить ревью вручную, нажмите **Retry** у джоба в GitLab: если ключ
-  изменился, LLM запускается заново и обновляет прежний комментарий. Если
-  изменений нет, запросы к LLM не отправляются. Проверяется текущее состояние
-  MR, в том числе при перезапуске джоба из старого пайплайна. При этом
-  `.aireview.yml` (модели, `review_instructions`, `ignore_paths`) берётся из
-  чекаута перезапускаемого пайплайна. Проверка `[skip review]` в примере ниже
-  использует `CI_MERGE_REQUEST_TITLE` того пайплайна, а не свежий заголовок из API.
+- `update` (the default) — when the key matches the previous review, no requests
+  are sent to the LLM at all; when the diff or the settings have changed, the
+  review runs again and **overwrites** the previous comment.
+- `once` — the review is done once, and later pushes to the MR do not repeat it.
+  To update the review by hand, press **Retry** on the job in GitLab: if the key
+  has changed, the LLM runs again and updates the previous comment. If nothing
+  changed, no requests are sent to the LLM. The current state of the MR is
+  checked, including when the job is restarted from an old pipeline. Note that
+  `.aireview.yml` (models, `review_instructions`, `ignore_paths`) is taken from
+  the checkout of the restarted pipeline. The `[skip review]` check in the
+  example below uses the `CI_MERGE_REQUEST_TITLE` of that pipeline, not the
+  fresh title from the API.
 
-Для определения Retry нужны `CI_PROJECT_ID`, `CI_JOB_ID` и доступ токена
-`GITLAB_TOKEN` к [Jobs API](https://docs.gitlab.com/api/jobs/#list-all-jobs-by-pipeline).
-Проверяется наличие более ранней попытки того же джоба в том же пайплайне.
-Автоматический retry из настройки GitLab `retry:` тоже считается повторной
-попыткой. Вне GitLab CI режим `once` продолжает пропускать существующее ревью.
-Флаг `--force` принудительно повторяет ревью даже без изменений.
+Detecting a Retry needs `CI_PROJECT_ID`, `CI_JOB_ID` and access for the
+`GITLAB_TOKEN` to the
+[Jobs API](https://docs.gitlab.com/api/jobs/#list-all-jobs-by-pipeline).
+The tool checks whether an earlier attempt of the same job exists in the same
+pipeline. An automatic retry from the GitLab `retry:` setting counts as a repeat
+attempt too. Outside of GitLab CI, `once` mode keeps skipping an existing
+review. The `--force` flag repeats the review even when nothing has changed.
 
-Пока идёт ревью, merge request может уехать. Перед публикацией `aireview`
-перечитывает его и сравнивает `sha`, целевую ветку, `diff_refs`, заголовок
-и описание: если что-то из этого изменилось, результат не публикуется —
-в комментарии не должно оказаться ревью уже неактуального диффа. Текст ревью при этом печатается в
-stdout до попытки публикации, так что в логе джоба он остаётся. Прежний
-комментарий держится до конца следующего прогона.
+While the review is running, the merge request can move on. Before publishing,
+`aireview` re-reads it and compares `sha`, the target branch, `diff_refs`, the
+title and the description: if any of those changed, the result is not published —
+a comment must not end up holding a review of a diff that is no longer current.
+The review text is printed to stdout before the publishing attempt, so it stays
+in the job log. The previous comment is kept until the end of the next run.
 
 ## GitLab CI
 
-Для пайплайнов merge request'ов можно запускать `aireview` в отдельном CI-джобе
-и давать GitLab подставлять текущий URL MR:
+For merge request pipelines `aireview` can run in a separate CI job, letting
+GitLab substitute the current MR URL:
 
 ```yaml
 workflow:
@@ -297,119 +300,15 @@ aireview:
       - stuck_or_timeout_failure
 ```
 
-Секреты вроде `GITLAB_TOKEN`, `GEMINI_API_KEY` и опциональные креды Jira
-задавайте в CI/CD-переменных GitLab. Если нужно, чтобы джоб публиковал
-результат обратно в merge request, добавьте `--post` к команде review.
+Set secrets such as `GITLAB_TOKEN`, `GEMINI_API_KEY` and the optional Jira
+credentials in the GitLab CI/CD variables. If the job should publish the result
+back to the merge request, add `--post` to the review command.
 
-Для раннеров, где LLM-провайдер доступен только через WireGuard, поднимайте
-локальный HTTP-прокси (например, `wireproxy`) до старта `aireview` и
-указывайте на него `LLM_HTTP_PROXY`. Это позволяет не задавать глобальные
-`https_proxy`/`no_proxy`, так что GitLab и Jira остаются на прямых
-соединениях, а RubyLLM ходит через туннель.
-
-### Раннеры с shell executor
-
-На раннерах с `shell`-executor'ом (как в `gitlab.railsc.ru`) секция `image:`
-не работает — джоб выполняется прямо на хосте раннера. В этом случае образ
-`aireview` собирается и публикуется в общий registry, а джоб проекта просто
-запускает его через `docker run`:
-
-```yaml
-stages:
-  - review
-
-aireview:
-  stage: review
-  only:
-    - merge_requests
-  variables:
-    AIREVIEW_IMAGE: "index.exp.railsc.ru/apress/aireview:latest"
-    GITLAB_TOKEN: "$AIREVIEW_GITLAB_TOKEN"
-    REVIEW_MODE: "once"
-  allow_failure: true
-  interruptible: true
-  resource_group: "aireview-$CI_MERGE_REQUEST_IID"
-  script:
-    - >
-       if echo "$CI_MERGE_REQUEST_TITLE" | grep -q "\[skip review\]"; then
-         echo "Skipping aireview due to [skip review] tag in merge request title"
-         exit 0
-       fi
-    - docker pull "$AIREVIEW_IMAGE"
-    - >
-       docker run --rm
-       --network host
-       -e "GITLAB_URL=$CI_SERVER_URL"
-       -e GITLAB_TOKEN
-       -e CI_PROJECT_ID
-       -e CI_JOB_ID
-       -e REVIEW_MODE
-       -e GEMINI_API_KEY
-       -e LLM_HTTP_PROXY
-       -e LLM_TIMEOUT
-       -e JIRA_URL
-       -e JIRA_LOGIN
-       -e JIRA_PASSWORD
-       -v "$(pwd)/.aireview.yml:/app/.aireview.yml:ro"
-       "$AIREVIEW_IMAGE"
-       review "$CI_MERGE_REQUEST_PROJECT_URL/-/merge_requests/$CI_MERGE_REQUEST_IID"
-       --post --verbose
-```
-
-Что здесь важно:
-
-- `.aireview.yml` монтируется отдельным файлом в `/app`, а не подменяет весь
-  рабочий каталог: в образе по этому пути лежит сам гем. Модели и правила
-  проекта живут в этом файле, а в переменные CI/CD выносятся только секреты и
-  адрес прокси.
-- Секреты передаются в контейнер по имени (`-e GITLAB_TOKEN`), а не как
-  `-e "GITLAB_TOKEN=$..."`. На shell-раннере значение из второй формы попадает
-  в argv процесса `docker` и видно в `ps` любому соседнему джобу на том же
-  хосте.
-- `--network host` нужен, чтобы контейнер видел `wireproxy`, поднятый на
-  `127.0.0.1` хоста раннера.
-- `allow_failure: true` оставляет ревью необязательным: недоступный LLM не
-  должен блокировать merge request.
-- `resource_group` сериализует ревью в пределах одного MR. Без него два
-  пайплайна, запущенные подряд, могут одновременно не найти прошлый
-  комментарий и создать по своему.
-- `REVIEW_MODE=once` включает одно автоматическое ревью на MR. Для обновления
-  после изменений достаточно Retry джоба; `CI_PROJECT_ID` и `CI_JOB_ID`
-  передаются в контейнер, чтобы отличить Retry от нового пайплайна.
-- `--post` публикует ревью комментарием в MR; без него результат остаётся
-  только в логе джоба.
-- Токен в `GITLAB_TOKEN` должен иметь scope `api`: он и читает дифф, и пишет
-  комментарий.
-
-Про доступ к секретам: пайплайн merge request'а выполняет `.gitlab-ci.yml` из
-ветки MR, поэтому автор ветки может подменить джоб и вытащить любую переменную,
-доступную пайплайну. Маскирование от этого не спасает. Отсюда правила:
-
-- заводите переменные на уровне проекта, а не группы: иначе ключ, доступный
-  ревьюеру в одном проекте, утекает через любой другой проект группы;
-- в `GITLAB_TOKEN` кладите отдельный project access token с ролью Reporter и
-  scope `api`, выданный только на этот проект, а не личный или групповой токен;
-- для `GEMINI_API_KEY` заводите отдельный ключ с собственной квотой, чтобы его
-  компрометация не задевала остальные интеграции;
-- protected-переменные надёжнее, но пайплайнам из обычных feature-веток они
-  недоступны, так что для ревью на каждый MR они не подходят.
-
-### Выпуск образа
-
-1) Внести правки и смержить их в `master`
-2) Создать и отправить тег с версией образа, например:
-
-```
-git switch master
-git pull
-git tag 0.1.1
-git push upstream 0.1.1
-```
-
-Пайплайн автоматически соберёт и отправит в registry
-`index.exp.railsc.ru/apress/aireview:<тег>` и обновит для него тег `latest`.
-Тег `latest` обновляется каждым релизом, поэтому в подключённых проектах
-надёжнее указывать конкретную версию в переменной `AIREVIEW_IMAGE`.
+For runners where the LLM provider is only reachable over WireGuard, bring up a
+local HTTP proxy (`wireproxy`, for instance) before `aireview` starts and point
+`LLM_HTTP_PROXY` at it. That avoids setting global `https_proxy`/`no_proxy`, so
+GitLab and Jira stay on direct connections while RubyLLM goes through the
+tunnel.
 
 ## Docker
 
@@ -427,49 +326,10 @@ bundle _2.3.26_ exec rspec spec/config_spec.rb
 bundle _2.3.26_ exec rspec spec/secret_scrubber_spec.rb
 ```
 
-## Проверки на реальных MR
-
-Что удалось подтвердить вручную на боевых merge request'ах.
-
-### Несоответствия кода и постановки в Jira
-
-Нашёл ключи, которых нет в задаче [GOODS-5061](https://jira.railsc.ru/browse/GOODS-5061). Вывод: https://gitlab.railsc.ru/-/snippets/52
-
-```bash
-bundle _2.3.26_ exec bin/aireview review https://gitlab.railsc.ru/abak-press/spider/-/merge_requests/1074 --verbose
-```
-
-Поймал добавленный тестовый метод. Вывод: https://gitlab.railsc.ru/-/snippets/53
-
-```bash
-bundle _2.3.26_ exec bin/aireview review https://gitlab.railsc.ru/DenisDenis9331/spider/-/merge_requests/76 --verbose
-```
-
-### Поиск ошибок в коде
-
-Нашёл баг, который позже починили в [другом MR](https://gitlab.railsc.ru/abak-press/spider/-/merge_requests/1076/diffs#c77d49536a6d43fa2953c59b5e8757f084dbbe9e_33_32). Вывод: https://gitlab.railsc.ru/-/snippets/54
-
-```bash
-bundle _2.3.26_ exec bin/aireview review https://gitlab.railsc.ru/abak-press/spider/-/merge_requests/1071 --verbose
-```
-
-### Вырезание секретов перед отправкой в LLM
-
-Контекст, который реально уходит в нейронку: https://gitlab.railsc.ru/-/snippets/55
-
-```bash
-bundle _2.3.26_ exec bin/aireview review https://gitlab.railsc.ru/abak-press/spider/-/merge_requests/1078 --verbose --dry-run
-```
-
-Пример вырезанного секрета из вывода:
-
-```diff
-diff --git a/spec/fixtures/cassettes/openai_images_2_images_size_1024.yml b/spec/fixtures/cassettes/openai_images_2_images_size_1024.yml
---- a/spec/fixtures/cassettes/openai_images_2_images_size_1024.yml
-+++ b/spec/fixtures/cassettes/openai_images_2_images_size_1024.yml
-[REDACTED: secret file spec/fixtures/cassettes/openai_images_2_images_size_1024.yml]
-```
-
 ## Notes
 
-- CLI ищет `.aireview.yml` и `.env`, поднимаясь вверх от текущей рабочей директории, так что проектный конфиг можно держать в корне репозитория, даже когда инструмент запускается из `aireview/`.
+- The CLI looks for `.aireview.yml` and `.env` walking up from the current working directory, so the project config can be kept in the repository root even when the tool is run from `aireview/`.
+
+## License
+
+[MIT](LICENSE)
