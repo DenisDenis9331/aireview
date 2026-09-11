@@ -6,7 +6,7 @@ on:
       - 'v*'
 
 jobs:
-  release:
+  publish:
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -27,8 +27,43 @@ jobs:
             echo "Tag ${GITHUB_REF_NAME} does not match lib/aireview/version.rb (${version})"
             exit 1
           fi
+      - name: Extract the changelog section for this version
+        run: |
+          awk -v version="${GITHUB_REF_NAME#v}" '
+            /^## / { printing = ($2 == version); next }
+            printing { print }
+          ' CHANGELOG.md | sed -e '/./,$!d' > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "No section for ${GITHUB_REF_NAME#v} in CHANGELOG.md"
+            exit 1
+          fi
+          cat release-notes.md
       - run: bundle exec rspec
+      - run: gem build aireview.gemspec
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release
+          path: |
+            aireview-*.gem
+            release-notes.md
+          if-no-files-found: error
       # The action has no version tags, only main; pinned to a commit
       - uses: rubygems/configure-rubygems-credentials@daab0479595bcc124493903b3df17273d86e073f
-      - run: gem build aireview.gemspec
       - run: gem push aireview-*.gem
+
+  # Separate job so that a failure here can be re-run alone: the gem is
+  # already on RubyGems.org and a second push of the same version is rejected.
+  github-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release
+      - uses: softprops/action-gh-release@v3
+        with:
+          name: ${{ github.ref_name }}
+          body_path: release-notes.md
+          files: aireview-*.gem

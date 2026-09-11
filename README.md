@@ -379,7 +379,9 @@ API key is stored anywhere. To cut a release:
    ```
 
 The workflow refuses to run when the tag does not match `Aireview::VERSION`,
-runs the test suite, builds the gem and pushes it.
+runs the test suite, builds the gem, pushes it and then creates a GitHub
+release for the tag with the matching `CHANGELOG.md` section as its notes and
+the built `.gem` attached.
 
 ## Changelog
 
