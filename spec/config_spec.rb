@@ -141,6 +141,14 @@ RSpec.describe Aireview::Config do
       end
     end
 
+    it 'uses English as the default review language' do
+      Dir.mktmpdir do |dir|
+        config = described_class.load(cwd: dir, env: {}, logger: Logger.new(nil))
+
+        expect(config.review_language).to eq('en')
+      end
+    end
+
     it 'uses the local Ollama API base by default' do
       Dir.mktmpdir do |dir|
         config = described_class.load(cwd: dir, env: {}, logger: Logger.new(nil))

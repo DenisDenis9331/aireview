@@ -23,7 +23,7 @@ module Aireview
     REVIEW_MODES = %w[update once].freeze
 
     DEFAULTS = {
-      'review_language' => 'ru',
+      'review_language' => 'en',
       'review_mode' => 'update',
       'ignore_paths' => [],
       'secret_patterns' => [],

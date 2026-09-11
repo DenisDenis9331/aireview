@@ -61,7 +61,7 @@ module Aireview
 
       @logger.info("Pipeline finished with #{accepted.size} accepted finding(s)")
 
-      ReviewRenderer.new.render(accepted, summary: summary)
+      ReviewRenderer.new(language: @config.review_language).render(accepted, summary: summary)
     end
 
     def dry_run_prompts(merge_request:, changes_text:, jira_issue: nil, critique: true)

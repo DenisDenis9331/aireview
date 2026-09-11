@@ -79,6 +79,10 @@ provider and the model of each stage are set through `LLM_GENERATE_PROVIDER`,
 `LLM_PROVIDER` stays the shared default when a stage has no provider of its
 own.
 
+`REVIEW_LANGUAGE` (or `review_language` in `.aireview.yml`) sets the language
+of the review: both the LLM answers and the headings of the rendered report.
+`en` is the default; `ru` is supported as well.
+
 If only the LLM traffic has to go through a proxy, set `LLM_HTTP_PROXY` or
 `llm.http_proxy`. That configures RubyLLM only; requests to GitLab and Jira
 keep going directly.
