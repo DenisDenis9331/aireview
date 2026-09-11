@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- The prompts no longer ask the model to check whether dependency and image
+  versions exist; candidates about nonexistent versions are rejected.
+- An overloaded LLM (503) is retried up to three times with pauses of about
+  2, 5 and 5 minutes instead of two retries of 1.5-2.5 minutes.
+
 ## 0.1.0
 
 Initial release.

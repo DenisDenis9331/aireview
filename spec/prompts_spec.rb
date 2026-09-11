@@ -10,6 +10,7 @@ RSpec.describe 'Aireview prompts' do
       'candidates: at most 3 of the most important findings',
       'id: C1, C2, C3 in order',
       'otherwise null',
+      'Do not verify that the specified versions',
       'All free-text fields must be written in the language'
     )
   end
@@ -22,6 +23,8 @@ RSpec.describe 'Aireview prompts' do
       'decision: keep or reject',
       'refinement: optional, only for keep',
       'Do not change file, line, quoted_code',
+      'Do not verify that the specified versions',
+      'Reject candidates claiming that a version does not exist',
       'All free-text fields must be written in the language'
     )
   end

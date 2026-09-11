@@ -162,7 +162,10 @@ To run both stages locally, set `ollama` in both provider variables. The
 address with `/v1` matches the
 [Ollama configuration in RubyLLM](https://rubyllm.com/configuration/#provider-configuration).
 `LLM_TIMEOUT` sets the timeout of every LLM request in seconds; for a slow
-local model it can be raised.
+local model it can be raised. It does not apply to an "overloaded" (503)
+answer from the provider: such a request gets up to four attempts, the
+original one and three retries with pauses of about 2, 5 and 5 minutes, and
+only the failed stage is repeated, not the whole run.
 
 Project rules live in `.aireview.yml`. In YAML the `generate.model` and
 `critique.model` settings are required for each stage and are not inherited
@@ -316,12 +319,18 @@ aireview:
     LLM_HTTP_PROXY: "http://127.0.0.1:8888"
   script:
     - bundle _2.3.26_ exec bin/aireview review "$MR_URL" --verbose
+  timeout: 45m
   retry:
     max: 1
     when:
       - runner_system_failure
       - stuck_or_timeout_failure
 ```
+
+`timeout: 45m` is a chosen ceiling, not a guarantee that every retry fits in:
+when the provider is overloaded, one stage can wait up to ~14 minutes of
+pauses plus up to four requests of `LLM_TIMEOUT` each, and there are two
+stages.
 
 Set secrets such as `GITLAB_TOKEN`, `GEMINI_API_KEY` and the optional Jira
 credentials in the GitLab CI/CD variables. If the job should publish the result
@@ -351,6 +360,7 @@ bundle _2.3.26_ exec rspec spec/secret_scrubber_spec.rb
 
 ## Notes
 
+- The reviewer does not check whether the specified versions of dependencies and images exist: the model's knowledge of releases is outdated, and that is what CI is for. Syntax errors and contradictions with the MR/Jira requirements are checked as usual.
 - The CLI looks for `.aireview.yml` and `.env` walking up from the current working directory, so the project config can be kept in the repository root even when the tool is run from `aireview/`.
 
 ## Changelog

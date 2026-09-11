@@ -6,11 +6,12 @@ require 'timeout'
 
 module Aireview
   class Reviewer
-    MAX_TRANSIENT_RETRIES = 2
+    MAX_TRANSIENT_RETRIES = 3
     TRANSIENT_RETRY_BASE_DELAY = 2.0
     TRANSIENT_RETRY_JITTER_RANGE = 2.0..5.0
     PROVIDER_RETRY_DELAY_MULTIPLIER_RANGE = 2.0..2.4
-    OVERLOADED_RETRY_DELAY_RANGE = 90.0..150.0
+    OVERLOADED_RETRY_DELAYS = [120.0, 300.0, 300.0].freeze
+    OVERLOADED_RETRY_JITTER_RANGE = 0.85..1.15
     RETRY_WAIT_LOG_FORMAT = 'LLM %<stage>s request will sleep %<delay>.1fs before retry%<source>s ' \
                             '(attempt %<next_attempt>d/%<max_attempts>d, model=%<model>s)'
 
@@ -184,10 +185,12 @@ module Aireview
       end
 
       if overloaded_llm_error?(error)
+        base_delay = OVERLOADED_RETRY_DELAYS.fetch(attempt - 1, OVERLOADED_RETRY_DELAYS.last)
+        multiplier = rand(OVERLOADED_RETRY_JITTER_RANGE)
         return {
-          delay: rand(OVERLOADED_RETRY_DELAY_RANGE),
-          provider_delay: nil,
-          multiplier: nil,
+          delay: base_delay * multiplier,
+          base_delay: base_delay,
+          multiplier: multiplier,
           strategy: :overloaded
         }
       end
@@ -202,7 +205,13 @@ module Aireview
     end
 
     def retry_delay_source(retry_delay)
-      return ' (overloaded backoff)' if retry_delay[:strategy] == :overloaded
+      if retry_delay[:strategy] == :overloaded
+        return format(
+          ' (overloaded backoff %<base_delay>.0fs, multiplier %<multiplier>.2fx)',
+          base_delay: retry_delay[:base_delay],
+          multiplier: retry_delay[:multiplier]
+        )
+      end
       return '' unless retry_delay[:provider_delay]
 
       format(

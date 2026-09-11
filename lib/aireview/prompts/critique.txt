@@ -23,6 +23,12 @@ Implementation details (config flags, deploy settings, new fields, helper
 methods), accompanying refactoring and any changes whose relation to the task
 is plausible are NOT task_mismatch. Reject such candidates.
 
+Do not verify that the specified versions of packages, libraries, tools and
+image tags exist. Do not report that a version does not exist or has not been
+released yet. Check syntax errors and explicit contradictions with the MR/Jira
+requirements as usual.
+Reject candidates claiming that a version does not exist.
+
 Reject a candidate if it:
 - is not confirmed by the diff or Jira;
 - is based on an assumption about code outside the diff;
