@@ -22,8 +22,8 @@ MVP flow:
 
 ## Requirements
 
-- Ruby 3.1.3
-- Bundler 2.3.26
+- Ruby 3.1.3 or newer (CI runs the tests on 3.1, 3.3, 3.4 and 4.0)
+- Bundler 2.3.26 for the repository checkout; `gem install` needs no specific Bundler
 - A GitLab personal access token
 - An API key for a remote LLM provider; a local Ollama needs no key
 - Optionally, a Jira login and password

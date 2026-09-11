@@ -93,8 +93,5 @@ DEPENDENCIES
   rspec (~> 3.13)
   rubocop (~> 1.75)
 
-RUBY VERSION
-   ruby 3.1.3p185
-
 BUNDLED WITH
    2.3.26
