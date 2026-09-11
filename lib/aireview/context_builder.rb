@@ -8,8 +8,8 @@ module Aireview
     GENERATE_PROMPT_TEMPLATE = File.read(File.expand_path('prompts/generate.txt', __dir__)).strip.freeze
     CRITIQUE_PROMPT_TEMPLATE = File.read(File.expand_path('prompts/critique.txt', __dir__)).strip.freeze
     LANGUAGE_NAMES = {
-      'ru' => 'русский',
-      'en' => 'английский'
+      'ru' => 'Russian',
+      'en' => 'English'
     }.freeze
 
     def initialize(config:, logger: Logger.new($stderr))
@@ -48,9 +48,9 @@ module Aireview
     def system_prompt(template)
       extras = []
       if Aireview::Utils.present?(@config.review_instructions)
-        extras << "Дополнительные инструкции проекта:\n#{scrub_text(@config.review_instructions.strip)}"
+        extras << "Additional project instructions:\n#{scrub_text(@config.review_instructions.strip)}"
       end
-      extras << "Язык ответа: #{language_name(@config.review_language)}."
+      extras << "Response language: #{language_name(@config.review_language)}."
 
       [template, *extras].join("\n\n")
     end

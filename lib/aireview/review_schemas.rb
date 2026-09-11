@@ -7,16 +7,16 @@ module Aireview
     def generate
       <<~SCHEMA.strip
         {
-          "summary": "1-2 предложения о сути изменений в MR",
+          "summary": "1-2 sentences about the essence of the MR changes",
           "candidates": [
             {
               "id": "C1",
               "file": "path/from/diff.rb",
               "line": 42,
-              "quoted_code": "изменённый фрагмент кода",
-              "problem": "текст замечания",
-              "why": "почему это важно",
-              "suggestion": "что исправить или проверить",
+              "quoted_code": "changed code fragment",
+              "problem": "finding text",
+              "why": "why it matters",
+              "suggestion": "what to fix or check",
               "category": "bug",
               "severity": "major"
             }
@@ -32,11 +32,11 @@ module Aireview
             {
               "id": "C1",
               "decision": "keep",
-              "reason": "почему замечание подтверждено",
+              "reason": "why the finding is confirmed",
               "refinement": {
-                "problem": "уточнённый текст замечания",
-                "why": "почему это действительно проблема",
-                "suggestion": "что исправить или проверить",
+                "problem": "refined finding text",
+                "why": "why this is really a problem",
+                "suggestion": "what to fix or check",
                 "category": "bug",
                 "severity": "major"
               }
@@ -44,7 +44,7 @@ module Aireview
             {
               "id": "C2",
               "decision": "reject",
-              "reason": "почему замечание отклонено"
+              "reason": "why the finding is rejected"
             }
           ]
         }

@@ -35,8 +35,8 @@ RSpec.describe Aireview::ContextBuilder do
         }
       )
 
-      expect(prompt[:system_prompt]).to include('Дополнительные инструкции проекта')
-      expect(prompt[:system_prompt]).to include('Язык ответа: русский.')
+      expect(prompt[:system_prompt]).to include('Additional project instructions')
+      expect(prompt[:system_prompt]).to include('Response language: Russian.')
       expect(prompt[:user_prompt]).to include('MR: Add review flow')
       expect(prompt[:user_prompt]).to include('Author: Denis')
       expect(prompt[:user_prompt]).to include('Jira task (AIR-123):')
