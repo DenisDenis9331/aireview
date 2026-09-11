@@ -1,3 +1,11 @@
+PATH
+  remote: .
+  specs:
+    aireview (0.1.0)
+      dotenv (~> 3.1)
+      faraday (~> 2.14)
+      ruby_llm (= 1.16.0)
+
 GEM
   remote: https://rubygems.org/
   specs:
@@ -81,11 +89,9 @@ PLATFORMS
   x86_64-linux
 
 DEPENDENCIES
-  dotenv (~> 3.1)
-  faraday (~> 2.14)
+  aireview!
   rspec (~> 3.13)
   rubocop (~> 1.75)
-  ruby_llm (= 1.16.0)
 
 RUBY VERSION
    ruby 3.1.3p185

@@ -28,6 +28,25 @@ MVP flow:
 - An API key for a remote LLM provider; a local Ollama needs no key
 - Optionally, a Jira login and password
 
+## Installation
+
+From RubyGems:
+
+```bash
+gem install aireview
+aireview --help
+```
+
+From a checkout of the repository:
+
+```bash
+bundle _2.3.26_ install
+bundle _2.3.26_ exec bin/aireview --help
+```
+
+The examples below use `bundle _2.3.26_ exec bin/aireview`; with the gem
+installed, replace it with plain `aireview`.
+
 ## Configuration
 
 Secrets live in environment variables or in a local `.env` file. In `.env` the
@@ -329,6 +348,10 @@ bundle _2.3.26_ exec rspec spec/secret_scrubber_spec.rb
 ## Notes
 
 - The CLI looks for `.aireview.yml` and `.env` walking up from the current working directory, so the project config can be kept in the repository root even when the tool is run from `aireview/`.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

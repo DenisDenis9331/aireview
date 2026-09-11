@@ -6,7 +6,8 @@ RUN gem install bundler:2.3.26
 
 WORKDIR /app
 
-COPY Gemfile Gemfile.lock ./
+COPY Gemfile Gemfile.lock aireview.gemspec ./
+COPY lib/aireview/version.rb lib/aireview/version.rb
 RUN bundle _2.3.26_ install
 
 COPY . .
