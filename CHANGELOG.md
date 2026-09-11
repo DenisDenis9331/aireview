@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.1
 
 - The prompts no longer ask the model to check whether dependency and image
   versions exist; candidates about nonexistent versions are rejected.
