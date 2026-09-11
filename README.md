@@ -363,6 +363,24 @@ bundle _2.3.26_ exec rspec spec/secret_scrubber_spec.rb
 - The reviewer does not check whether the specified versions of dependencies and images exist: the model's knowledge of releases is outdated, and that is what CI is for. Syntax errors and contradictions with the MR/Jira requirements are checked as usual.
 - The CLI looks for `.aireview.yml` and `.env` walking up from the current working directory, so the project config can be kept in the repository root even when the tool is run from `aireview/`.
 
+## Releasing
+
+Releases are published to RubyGems.org by the `Release` workflow through
+[trusted publishing](https://guides.rubygems.org/trusted-publishing/), so no
+API key is stored anywhere. To cut a release:
+
+1. Bump `Aireview::VERSION` in `lib/aireview/version.rb` and move the
+   `Unreleased` section of `CHANGELOG.md` under the new version.
+2. Commit, then tag the commit with the same version and push the tag:
+
+   ```bash
+   git tag v0.2.0
+   git push github main v0.2.0
+   ```
+
+The workflow refuses to run when the tag does not match `Aireview::VERSION`,
+runs the test suite, builds the gem and pushes it.
+
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md).

@@ -1,0 +1,34 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: .ruby-version
+          bundler-cache: true
+      - name: Check that the tag matches Aireview::VERSION
+        run: |
+          version=$(ruby -Ilib -e 'require "aireview/version"; puts Aireview::VERSION')
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match lib/aireview/version.rb (${version})"
+            exit 1
+          fi
+      - run: bundle exec rspec
+      # The action has no version tags, only main; pinned to a commit
+      - uses: rubygems/configure-rubygems-credentials@daab0479595bcc124493903b3df17273d86e073f
+      - run: gem build aireview.gemspec
+      - run: gem push aireview-*.gem
