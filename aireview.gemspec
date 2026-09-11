@@ -18,6 +18,7 @@ Gem::Specification.new do |spec|
       'config/.aireview.yml.example',
       'lib/**/*.{rb,txt}',
       'CHANGELOG.md',
+      'CONTRIBUTORS.md',
       'README.md',
       'LICENSE'
     ]

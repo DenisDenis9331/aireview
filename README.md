@@ -387,6 +387,10 @@ the built `.gem` attached.
 
 See [CHANGELOG.md](CHANGELOG.md).
 
+## Contributors
+
+See [CONTRIBUTORS.md](CONTRIBUTORS.md).
+
 ## License
 
 [MIT](LICENSE)
