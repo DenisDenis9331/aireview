@@ -113,28 +113,47 @@ module Aireview
         [entry.header + body + partial_marker(entry, shown), shown, stopped]
       end
 
-      # Каждый хунк и каждая пометка о пропуске проверяются на оставшееся
-      # место вместе с заголовком файла и итоговой пометкой о частичности.
-      # Слишком большой хунк раскладку не останавливает: он попадает в
-      # покрытие, а пометка о нём попадает в текст, только если есть место.
+      # Место сначала отдаётся хункам, которые можно показать, и только на
+      # остаток добавляются пометки о слишком больших: иначе пометки могли бы
+      # вытеснить единственный подходящий хунк. Факт пропуска в покрытие
+      # попадает независимо от того, есть ли для пометки место.
       def pack_hunks(entry)
         base = entry.header.length + partial_marker(entry, 0).length
-        body = +''
-        shown = 0
+        shown = []
         skipped = []
+        stopped = false
+        used = 0
         entry.hunks.each_with_index do |hunk, index|
           if base + hunk.length > @limit
-            skipped << (index + 1)
-            marker = skip_marker(entry, index)
-            body << marker if base + body.length + marker.length <= remaining
+            skipped << index
             next
           end
-          return [body, shown, skipped, true] if base + body.length + hunk.length > remaining
+          if base + used + hunk.length > remaining
+            stopped = true
+            break
+          end
 
-          body << hunk
-          shown += 1
+          shown << index
+          used += hunk.length
         end
-        [body, shown, skipped, false]
+
+        body = render_hunks(entry, shown: shown, skipped: skipped, room: remaining - base - used)
+        [body, shown.size, skipped.map { |index| index + 1 }, stopped]
+      end
+
+      def render_hunks(entry, shown:, skipped:, room:)
+        marked = skipped.select do |index|
+          marker = skip_marker(entry, index)
+          next false if marker.length > room
+
+          room -= marker.length
+          true
+        end
+        entry.hunks.each_with_index.filter_map do |hunk, index|
+          next hunk if shown.include?(index)
+
+          skip_marker(entry, index) if marked.include?(index)
+        end.join
       end
 
       def skip_marker(entry, index)

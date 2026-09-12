@@ -161,6 +161,24 @@ RSpec.describe Aireview::ContextBudget do
       end
     end
 
+    it 'gives the room to a hunk that fits before spending it on skip markers' do
+      small = hunk(30, lines: 3)
+      diff = Array.new(20) { |i| hunk(i + 1, lines: 200) }.join + small
+      changes = [change('a.rb', diff)]
+
+      packed, coverage = pack(changes, budget: 1_000)
+
+      expect(packed.text.length).to be <= 1_000
+      expect(packed.text).to include('+30.0')
+      expect(packed.text).to include('[file a.rb: 1 of 21 hunks shown]')
+      expect(coverage.hunks_skipped.map { |item| item[:hunk] }).to eq((1..20).to_a)
+      expect(coverage.files_partial).to eq([{ path: 'a.rb', shown: 1, total: 21 }])
+      # markers only for as many skipped hunks as the remaining room allows, in order
+      markers = packed.text.scan(/\[hunk (\d+) of 21 skipped/).flatten.map(&:to_i)
+      expect(markers).to eq((1..markers.size).to_a)
+      expect(markers.size).to be_between(1, 19)
+    end
+
     it 'counts separators between files against the budget' do
       changes = Array.new(6) { |i| change("f#{i}.rb", hunk(i, lines: 40)) }
       fetcher = Aireview::DiffFetcher.new(ignore_paths: [], logger: Logger.new(nil))
