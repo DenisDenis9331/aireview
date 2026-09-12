@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - Context budget: `llm.max_prompt_chars` caps the request of each stage,
   `context.max_*_chars` cap the MR description, the Jira description and
