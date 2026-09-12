@@ -1,4 +1,5 @@
 require 'aireview/review_renderer'
+require 'aireview/context_budget'
 
 RSpec.describe Aireview::ReviewRenderer do
   let(:finding) do
@@ -43,6 +44,49 @@ RSpec.describe Aireview::ReviewRenderer do
 
     expect(result).to include('## Summary', 'The first pass did not return a summary of the changes.')
     expect(result).to include('None found.', 'ok')
+  end
+
+  it 'reports partial coverage next to the result and in a separate block' do
+    coverage = Aireview::ContextBudget::Coverage.empty
+    coverage.files_not_shown.push('app/a.rb', 'app/b.rb')
+    coverage.files_partial << { path: 'app/c.rb', shown: 2, total: 5 }
+    coverage.files_unavailable << 'assets/logo.png'
+    coverage.truncated_sections << 'Jira description'
+
+    result = described_class.new.render([], summary: 'Recalculates totals', coverage: coverage)
+
+    expect(result).to include(
+      "ok. Partial review: 2 files not reviewed, 1 files reviewed partially, " \
+      '1 files without an available diff, 1 sections truncated.'
+    )
+    expect(result).to include(<<~BLOCK)
+      ## Not reviewed
+
+      - app/a.rb
+      - app/b.rb
+      - app/c.rb: 2/5 hunks shown
+      - assets/logo.png: diff not available
+      - Truncated sections: Jira description
+    BLOCK
+    expect(result.index('## Not reviewed')).to be > result.index('## Result')
+    expect(result.index('This report was generated')).to be > result.index('## Not reviewed')
+  end
+
+  it 'keeps the result about findings and renders coverage labels in Russian' do
+    coverage = Aireview::ContextBudget::Coverage.empty
+    coverage.files_not_shown << 'app/a.rb'
+
+    result = described_class.new(language: 'ru').render([finding], summary: 'x', coverage: coverage)
+
+    expect(result).to include('needs attention. Ревью частичное: 1 файлов не проверено.')
+    expect(result).to include("## Не вошло в ревью\n\n- app/a.rb")
+  end
+
+  it 'renders nothing about coverage when it is complete' do
+    complete = described_class.new.render([], summary: 'x', coverage: Aireview::ContextBudget::Coverage.empty)
+
+    expect(complete).to eq(described_class.new.render([], summary: 'x'))
+    expect(complete).not_to include('Partial review', 'Not reviewed')
   end
 
   it 'uses placeholders for missing finding fields' do

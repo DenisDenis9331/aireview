@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- Context budget: `llm.max_prompt_chars` caps the request of each stage,
+  `context.max_*_chars` cap the MR description, the Jira description and
+  comments and the diff. The diff is cut by whole files and hunks, never in
+  the middle of a hunk, and both stages share the same context.
+- Truncation is marked in the prompt and reported in the review: the result
+  line gets a `Partial review` suffix and a `Not reviewed` section lists the
+  files and sections that were left out. `--dry-run` and `--verbose` show the
+  sizes and the coverage.
+- Renames and other changes without text are told apart from diffs GitLab did
+  not return (too large, binary); the latter are reported as not reviewed.
+- A run fails with a clear error when not even one hunk fits next to the
+  system prompt, or when the candidates push the Critique request over its
+  limit.
+
 ## 0.1.1
 
 - The prompts no longer ask the model to check whether dependency and image

@@ -4,9 +4,13 @@ require 'pathname'
 require 'yaml'
 require_relative 'errors'
 require_relative 'utils'
+require_relative 'config_limits'
 
 module Aireview
   class Config
+    include ConfigLimits
+    extend ConfigLimits::ClassMethods
+
     DEFAULT_SECRET_FILES = [
       '.env',
       '.env.*',
@@ -21,7 +25,6 @@ module Aireview
     ].freeze
 
     REVIEW_MODES = %w[update once].freeze
-
     DEFAULTS = {
       'review_language' => 'en',
       'review_mode' => 'update',
@@ -35,8 +38,10 @@ module Aireview
       'llm' => {
         'provider' => 'gemini',
         'temperature' => 0,
-        'timeout' => 60
-      }
+        'timeout' => 60,
+        'max_prompt_chars' => ConfigLimits::DEFAULT_MAX_PROMPT_CHARS
+      },
+      'context' => ConfigLimits::CONTEXT_DEFAULTS
     }.freeze
 
     ENV_MAPPING = {
@@ -97,6 +102,7 @@ module Aireview
     def self.env_config(env)
       mapped_env_config(env)
         .merge('llm' => llm_env_config(env))
+        .merge(context_env_config(env))
         .merge(provider_key_env_config(env))
         .merge(generic_api_key_env_config(env))
     end
@@ -113,6 +119,7 @@ module Aireview
         'provider' => env['LLM_PROVIDER'],
         'temperature' => parse_float(env['LLM_TEMPERATURE']),
         'timeout' => parse_float(env['LLM_TIMEOUT']),
+        'max_prompt_chars' => parse_integer(env['LLM_MAX_PROMPT_CHARS']),
         'generate' => llm_stage_env_config(env, 'GENERATE'),
         'critique' => llm_stage_env_config(env, 'CRITIQUE')
       }.compact.reject { |key, value| %w[generate critique].include?(key) && value.empty? }
@@ -122,7 +129,8 @@ module Aireview
       {
         'provider' => env["LLM_#{stage}_PROVIDER"],
         'model' => env["LLM_#{stage}_MODEL"],
-        'temperature' => parse_float(env["LLM_#{stage}_TEMPERATURE"])
+        'temperature' => parse_float(env["LLM_#{stage}_TEMPERATURE"]),
+        'max_prompt_chars' => parse_integer(env["LLM_#{stage}_MAX_PROMPT_CHARS"])
       }.compact
     end
 

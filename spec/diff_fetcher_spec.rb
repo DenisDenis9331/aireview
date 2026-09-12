@@ -29,3 +29,38 @@ RSpec.describe Aireview::DiffFetcher do
     end
   end
 end
+
+RSpec.describe Aireview::DiffFetcher::Entry do
+  def entry(diff, **extra)
+    described_class.new({ 'old_path' => 'a.rb', 'new_path' => 'b.rb', 'diff' => diff }.merge(extra))
+  end
+
+  it 'splits a diff into hunks by their headers' do
+    parsed = entry("@@ -1,2 +1,2 @@\n-a\n+b\n@@ -10,1 +10,1 @@\n+c")
+
+    expect(parsed).to be_text
+    expect(parsed.hunks).to eq(["@@ -1,2 +1,2 @@\n-a\n+b\n", "@@ -10,1 +10,1 @@\n+c\n"])
+    expect(parsed.header).to eq("diff --git a/a.rb b/b.rb\n--- a/a.rb\n+++ b/b.rb\n")
+    expect(parsed.render).to eq(parsed.header + parsed.hunks.join)
+  end
+
+  it 'treats a diff without hunk headers as one hunk' do
+    parsed = entry('[REDACTED: secret file config/secrets.yml]')
+
+    expect(parsed.hunks).to eq(["[REDACTED: secret file config/secrets.yml]\n"])
+  end
+
+  it 'marks a rename without content changes as having no text changes' do
+    parsed = entry('', 'renamed_file' => true)
+
+    expect(parsed.kind).to eq(:no_text_changes)
+    expect(parsed).not_to be_unavailable
+    expect(parsed.render).to end_with("[no text changes]\n")
+  end
+
+  it 'marks too large and binary diffs as unavailable' do
+    expect(entry("@@ -1 +1 @@\n+x", 'too_large' => true).kind).to eq(:unavailable)
+    expect(entry("Binary files a/x.png and b/x.png differ\n").kind).to eq(:unavailable)
+    expect(entry('', 'too_large' => true).render).to end_with("[diff not available]\n")
+  end
+end

@@ -35,7 +35,16 @@ module Aireview
         where: 'Where',
         problem: 'Problem',
         why: 'Why it matters',
-        suggestion: 'Suggestion'
+        suggestion: 'Suggestion',
+        partial: 'Partial review',
+        not_reviewed: 'Not reviewed',
+        files_not_shown: 'files not reviewed',
+        files_partial: 'files reviewed partially',
+        files_unavailable: 'files without an available diff',
+        sections_truncated: 'sections truncated',
+        hunks_of: 'hunks shown',
+        diff_unavailable: 'diff not available',
+        section_list: 'Truncated sections'
       },
       'ru' => {
         summary: 'Сводка',
@@ -50,7 +59,16 @@ module Aireview
         where: 'Где',
         problem: 'Проблема',
         why: 'Почему важно',
-        suggestion: 'Предложение'
+        suggestion: 'Предложение',
+        partial: 'Ревью частичное',
+        not_reviewed: 'Не вошло в ревью',
+        files_not_shown: 'файлов не проверено',
+        files_partial: 'файлов проверено частично',
+        files_unavailable: 'файлов без доступного диффа',
+        sections_truncated: 'секций усечено',
+        hunks_of: 'хунков показано',
+        diff_unavailable: 'дифф недоступен',
+        section_list: 'Усечённые секции'
       }
     }.freeze
 
@@ -58,7 +76,11 @@ module Aireview
       @labels = LABELS.fetch(language.to_s) { LABELS.fetch(DEFAULT_LANGUAGE) }
     end
 
-    def render(accepted, summary:)
+    # coverage: факты усечения контекста от пайплайна, не текст модели.
+    # result по-прежнему про найденные проблемы; неполнота покрытия
+    # дописывается рядом с ним, чтобы строка результата не читалась как
+    # «проверено всё».
+    def render(accepted, summary:, coverage: nil)
       findings = sorted_findings(Array(accepted)).first(TOTAL_FINDINGS_LIMIT)
       mismatches = findings.select { |finding| category(finding) == 'task_mismatch' }.first(MISMATCH_LIMIT)
       important = findings.select { |finding| important_finding?(finding) }.first(IMPORTANT_LIMIT)
@@ -79,8 +101,8 @@ module Aireview
 
         ## #{label(:result)}
 
-        #{result}
-
+        #{result}#{partial_note(coverage)}
+        #{coverage_block(coverage)}
         #{label(:disclaimer)}
       MARKDOWN
     end
@@ -115,6 +137,34 @@ module Aireview
           - **#{label(:suggestion)}**: #{presence(value(finding, 'suggestion')) || label(:not_specified)}
         ITEM
       end.join("\n\n")
+    end
+
+    def partial_note(coverage)
+      return '' if coverage.nil? || coverage.complete?
+
+      counts = {
+        files_not_shown: coverage.files_not_shown.size,
+        files_partial: coverage.files_partial.size,
+        files_unavailable: coverage.files_unavailable.size,
+        sections_truncated: coverage.truncated_sections.size
+      }.reject { |_, count| count.zero? }.map { |key, count| "#{count} #{label(key)}" }
+
+      ". #{label(:partial)}: #{counts.join(', ')}."
+    end
+
+    def coverage_block(coverage)
+      return '' if coverage.nil? || coverage.complete?
+
+      lines = coverage.files_not_shown.map { |path| "- #{path}" }
+      lines += coverage.files_partial.map do |file|
+        "- #{file[:path]}: #{file[:shown]}/#{file[:total]} #{label(:hunks_of)}"
+      end
+      lines += coverage.files_unavailable.map { |path| "- #{path}: #{label(:diff_unavailable)}" }
+      unless coverage.truncated_sections.empty?
+        lines << "- #{label(:section_list)}: #{coverage.truncated_sections.join(', ')}"
+      end
+
+      "\n## #{label(:not_reviewed)}\n\n#{lines.join("\n")}\n"
     end
 
     def location(finding)

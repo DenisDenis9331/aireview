@@ -82,7 +82,7 @@ module Aireview
         parser_result: parser_result,
         gitlab_client: gitlab_client,
         merge_request: merge_request,
-        changes_text: render_changes(changes, config),
+        changes: prepare_changes(changes, config),
         jira_issue: maybe_load_jira_issue(config, merge_request, options)
       }
     end
@@ -102,18 +102,18 @@ module Aireview
       [merge_request, changes]
     end
 
-    def render_changes(changes, config)
+    # Дифф уходит дальше по файлам, а не одной строкой: бюджет контекста
+    # режет его по границам файлов и хунков.
+    def prepare_changes(changes, config)
       diff_fetcher = DiffFetcher.new(ignore_paths: config.ignore_paths, logger: @logger)
       filtered_changes = diff_fetcher.filter(changes)
       raise Error, 'No changes left after filtering ignore_paths' if filtered_changes.empty?
 
-      scrubbed_changes = SecretScrubber.new(
+      SecretScrubber.new(
         secret_patterns: config.secret_patterns,
         secret_files: config.secret_files,
         logger: @logger
       ).scrub_changes(filtered_changes)
-
-      diff_fetcher.render(scrubbed_changes)
     end
 
     def execute_review(config, context, options)
@@ -122,7 +122,7 @@ module Aireview
       if options[:dry_run]
         dry_run = pipeline.dry_run_prompts(
           merge_request: context[:merge_request],
-          changes_text: context[:changes_text],
+          changes: context[:changes],
           jira_issue: context[:jira_issue],
           critique: !options[:no_critique]
         )
@@ -135,7 +135,7 @@ module Aireview
 
       review = pipeline.run(
         merge_request: context[:merge_request],
-        changes_text: context[:changes_text],
+        changes: context[:changes],
         jira_issue: context[:jira_issue],
         critique: !options[:no_critique]
       )
@@ -157,7 +157,7 @@ module Aireview
       publisher = Publisher.new(gitlab_client: context[:gitlab_client], logger: @logger)
       prompts = pipeline.dry_run_prompts(
         merge_request: context[:merge_request],
-        changes_text: context[:changes_text],
+        changes: context[:changes],
         jira_issue: context[:jira_issue],
         critique: !options[:no_critique]
       )
@@ -321,27 +321,7 @@ module Aireview
     end
 
     def render_dry_run(dry_run)
-      @out.puts('=== LLM SETTINGS ===')
-      @out.puts("Generate: #{dry_run[:generate_model]} temperature=#{dry_run[:generate_temperature]}")
-      if dry_run[:critique_prompt]
-        @out.puts("Critique: #{dry_run[:critique_model]} temperature=#{dry_run[:critique_temperature]}")
-      else
-        @out.puts('Critique: disabled')
-      end
-      @out.puts
-      @out.puts('=== GENERATE SYSTEM PROMPT ===')
-      @out.puts(dry_run.dig(:generate_prompt, :system_prompt))
-      @out.puts
-      @out.puts('=== GENERATE USER PROMPT ===')
-      @out.puts(dry_run.dig(:generate_prompt, :user_prompt))
-      return unless dry_run[:critique_prompt]
-
-      @out.puts
-      @out.puts('=== CRITIQUE SYSTEM PROMPT ===')
-      @out.puts(dry_run.dig(:critique_prompt, :system_prompt))
-      @out.puts
-      @out.puts('=== CRITIQUE USER PROMPT ===')
-      @out.puts(dry_run.dig(:critique_prompt, :user_prompt))
+      DryRunReport.new(@out).render(dry_run)
     end
 
     def help

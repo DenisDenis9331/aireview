@@ -4,6 +4,10 @@ You are given the diff, the MR description, the Jira context and the candidates
 from the first pass. For every candidate return a verdict with decision=keep
 or reject.
 
+Parts of the context may be truncated to fit the budget; markers in square
+brackets show where. Missing text in a truncated part does not mean a missing
+requirement or missing code.
+
 Be a strict filter:
 - when in doubt, choose reject;
 - keep only the most important and well-supported findings;

@@ -141,6 +141,74 @@ RSpec.describe Aireview::Config do
       end
     end
 
+    it 'uses generous default context limits' do
+      Dir.mktmpdir do |dir|
+        config = described_class.load(cwd: dir, env: {}, logger: Logger.new(nil))
+
+        expect(config.max_prompt_chars(:generate)).to eq(400_000)
+        expect(config.max_prompt_chars('critique')).to eq(400_000)
+        expect(config.max_diff_chars).to eq(120_000)
+        expect(config.max_mr_description_chars).to eq(8_000)
+        expect(config.max_jira_description_chars).to eq(8_000)
+        expect(config.max_jira_comment_chars).to eq(2_000)
+      end
+    end
+
+    it 'loads context limits from YAML with stage-specific prompt limits inheriting from llm' do
+      Dir.mktmpdir do |dir|
+        File.write(File.join(dir, '.aireview.yml'), <<~YAML)
+          context:
+            max_diff_chars: 30000
+            max_jira_comment_chars: 500
+          llm:
+            max_prompt_chars: 50000
+            critique:
+              max_prompt_chars: 60000
+        YAML
+
+        config = described_class.load(cwd: dir, env: {}, logger: Logger.new(nil))
+
+        expect(config.max_diff_chars).to eq(30_000)
+        expect(config.max_jira_comment_chars).to eq(500)
+        expect(config.max_mr_description_chars).to eq(8_000)
+        expect(config.max_prompt_chars(:generate)).to eq(50_000)
+        expect(config.max_prompt_chars(:critique)).to eq(60_000)
+      end
+    end
+
+    it 'loads context limits from environment over YAML' do
+      Dir.mktmpdir do |dir|
+        File.write(File.join(dir, '.aireview.yml'), "context:\n  max_diff_chars: 30000\n")
+        env = {
+          'MAX_DIFF_CHARS' => '20000',
+          'MAX_JIRA_DESCRIPTION_CHARS' => '1000',
+          'LLM_MAX_PROMPT_CHARS' => '40000',
+          'LLM_GENERATE_MAX_PROMPT_CHARS' => '25000'
+        }
+
+        config = described_class.load(cwd: dir, env: env, logger: Logger.new(nil))
+
+        expect(config.max_diff_chars).to eq(20_000)
+        expect(config.max_jira_description_chars).to eq(1_000)
+        expect(config.max_prompt_chars(:generate)).to eq(25_000)
+        expect(config.max_prompt_chars(:critique)).to eq(40_000)
+      end
+    end
+
+    it 'rejects non-positive or non-integer context limits' do
+      Dir.mktmpdir do |dir|
+        File.write(File.join(dir, '.aireview.yml'), "context:\n  max_diff_chars: 0\nllm:\n  max_prompt_chars: abc\n")
+
+        config = described_class.load(cwd: dir, env: {}, logger: Logger.new(nil))
+
+        expect { config.max_diff_chars }
+          .to raise_error(Aireview::ConfigError, 'context.max_diff_chars must be a positive integer, got 0')
+        expect { config.max_prompt_chars(:generate) }
+          .to raise_error(Aireview::ConfigError, 'llm.generate.max_prompt_chars must be a positive integer, got "abc"')
+        expect { config.max_prompt_chars(:repair) }.to raise_error(ArgumentError, /unknown LLM stage/)
+      end
+    end
+
     it 'uses English as the default review language' do
       Dir.mktmpdir do |dir|
         config = described_class.load(cwd: dir, env: {}, logger: Logger.new(nil))

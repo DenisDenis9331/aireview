@@ -204,11 +204,18 @@ review_instructions: |
 
 ollama_api_base: http://localhost:11434/v1
 
+context:
+  max_diff_chars: 120000
+  max_mr_description_chars: 8000
+  max_jira_description_chars: 8000
+  max_jira_comment_chars: 2000
+
 llm:
   provider: gemini
   temperature: 0
   timeout: 60
   http_proxy: http://127.0.0.1:8888
+  max_prompt_chars: 400000
   generate:
     provider: gemini
     model: gemini-3.7-flash
@@ -217,7 +224,45 @@ llm:
     provider: ollama
     model: qwen2.5-coder:7b
     temperature: 0
+    max_prompt_chars: 60000
 ```
+
+### Context budget
+
+The request to each stage is capped by `llm.max_prompt_chars` (or
+`LLM_MAX_PROMPT_CHARS`; per stage `llm.generate.max_prompt_chars` /
+`LLM_GENERATE_MAX_PROMPT_CHARS` and the same for `critique`). The limits are in
+characters, not tokens: there is no exact tokenizer for the providers locally,
+and the Ollama window is set on the server where the client cannot see it. As
+a rule of thumb one token is three to four characters, so for a local model
+with `OLLAMA_CONTEXT_LENGTH=8192` set the stage limit to about 20 000
+characters to leave room for the answer.
+
+The MR and Jira context is assembled once per run and shared by both stages,
+so it is sized for the tighter of the two: the Critique stage also has to fit
+its system prompt and a reserve for the candidates. The sections are cut to
+their own limits first, keeping the beginning: `context.max_diff_chars`,
+`context.max_mr_description_chars`, `context.max_jira_description_chars` and
+`context.max_jira_comment_chars` (`MAX_DIFF_CHARS`, `MAX_MR_DESCRIPTION_CHARS`,
+`MAX_JIRA_DESCRIPTION_CHARS`, `MAX_JIRA_COMMENT_CHARS`). Only then is the diff
+cut, and only by whole files and whole hunks: files in the order GitLab returns
+them, a file that does not fit is shown hunk by hunk, everything after it is
+left out, and a single hunk larger than the whole budget is skipped rather
+than cut in the middle. Renames, mode changes and other files without text
+changes are always listed; files whose diff GitLab did not return (too large,
+binary) are listed as well and reported as not reviewed.
+
+Everything that was cut is marked in the prompt, so the model knows that a
+missing requirement or missing code may simply be outside the budget. The
+review reports it too: the result line gets a `Partial review: ...` suffix
+and a `Not reviewed` section lists the files and sections concerned. The
+result itself (`ok` / `needs attention`) is still only about the findings.
+
+When even one hunk cannot fit next to the system prompt, or the candidates
+returned by Generate push the Critique request over its limit, the run stops
+with an error instead of silently reviewing less. Raise the limits or extend
+`ignore_paths`. `--dry-run` prints the sizes of every part and the coverage;
+`--verbose` logs them during a real run.
 
 ## Usage
 
@@ -237,7 +282,7 @@ bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project
 - `--critique-temperature VALUE` overrides the temperature for the Critique pass only.
 - `--config PATH` points at a specific `.aireview.yml`.
 - `--no-jira` turns off the Jira enrichment even when the MR carries an issue key.
-- `--dry-run` prints the LLM settings and the Generate prompt, plus the Critique prompt unless `--no-critique` is given.
+- `--dry-run` prints the LLM settings, the context sizes and coverage, and the Generate prompt, plus the Critique prompt unless `--no-critique` is given.
 - `--no-critique` skips the second pass and renders the Generate candidates directly.
 - `--review-mode MODE` sets the behaviour when a review has already been published: `update` or `once`.
 - `--force` reviews again even when a review for this state of the MR is already published.
@@ -362,6 +407,7 @@ bundle _2.3.26_ exec rspec spec/secret_scrubber_spec.rb
 
 - The reviewer does not check whether the specified versions of dependencies and images exist: the model's knowledge of releases is outdated, and that is what CI is for. Syntax errors and contradictions with the MR/Jira requirements are checked as usual.
 - The CLI looks for `.aireview.yml` and `.env` walking up from the current working directory, so the project config can be kept in the repository root even when the tool is run from `aireview/`.
+- How Ollama behaves when a request is still larger than its context window is up to the server, not to `aireview`: check the `ollama serve` log for truncation messages on your setup and size `max_prompt_chars` so it does not happen.
 
 ## Releasing
 

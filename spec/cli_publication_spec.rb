@@ -327,3 +327,66 @@ RSpec.describe 'aireview review --post' do
     end
   end
 end
+
+RSpec.describe 'aireview review --dry-run' do
+  let(:merge_request) do
+    {
+      'title' => 'Add timeouts',
+      'description' => 'D' * 50,
+      'source_branch' => 'feature',
+      'target_branch' => 'main',
+      'author' => {'name' => 'Denis'},
+      'sha' => 'headsha'
+    }
+  end
+
+  let(:changes) do
+    [
+      {'old_path' => 'app.rb', 'new_path' => 'app.rb', 'diff' => "@@ -1 +1 @@\n-old\n+new\n"},
+      {'old_path' => 'big.rb', 'new_path' => 'big.rb', 'diff' => "@@ -1,3 +1,3 @@\n#{"+x\n" * 400}"},
+      {'old_path' => 'old.rb', 'new_path' => 'moved.rb', 'diff' => '', 'renamed_file' => true}
+    ]
+  end
+
+  let(:config) do
+    Aireview::Config.new(
+      {
+        'gitlab_token' => 'token',
+        'gemini_api_key' => 'key',
+        'context' => {'max_diff_chars' => 700, 'max_mr_description_chars' => 20},
+        'llm' => {
+          'provider' => 'gemini',
+          'generate' => {'model' => 'gemini-3.7-flash'},
+          'critique' => {'model' => 'gemini-3.8-flash'}
+        }
+      },
+      config_path: nil,
+      logger: Logger.new(File::NULL)
+    )
+  end
+
+  it 'prints the context summary, coverage and prompts with truncation markers' do
+    client = RecordingGitlabClient.new(merge_request: merge_request, changes: changes)
+    allow(Aireview::Config).to receive(:load).and_return(config)
+    allow(Aireview::GitlabClient).to receive(:new).and_return(client)
+    out = StringIO.new
+
+    status = Aireview::CLI.start(
+      ['review', 'https://gitlab.example.com/group/project/-/merge_requests/5', '--dry-run', '--no-jira'],
+      out: out,
+      err: StringIO.new,
+      env: {}
+    )
+
+    expect(status).to eq(0)
+    expect(out.string).to include('=== CONTEXT ===')
+    expect(out.string).to match(/Sections: \d+ chars, diff: \d+ chars \(budget 700, hunks 1\/2\)/)
+    expect(out.string).to match(/Generate request: \d+ chars \(~\d+ tokens\) of max 400000, system prompt \d+/)
+    expect(out.string).to match(/Critique request: \d+ chars/)
+    expect(out.string).to include("Coverage: partial\n  truncated sections: MR description\n  files not shown: big.rb")
+    expect(out.string).to include('[MR description truncated: 20 of 50 chars shown]')
+    expect(out.string).to include("+++ b/moved.rb\n[no text changes]")
+    expect(out.string).to include('[1 file(s) not shown: big.rb]')
+    expect(out.string).to include('=== CRITIQUE USER PROMPT ===')
+  end
+end

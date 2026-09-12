@@ -28,12 +28,14 @@ module Aireview
       @logger = logger
     end
 
-    def run(merge_request:, changes_text:, jira_issue: nil, critique: true)
-      generate_prompt = @context_builder.build_generate_prompt(
+    def run(merge_request:, changes:, jira_issue: nil, critique: true)
+      context = @context_builder.prepare(
         merge_request: merge_request,
-        changes_text: changes_text,
-        jira_issue: jira_issue
+        changes: changes,
+        jira_issue: jira_issue,
+        critique: critique
       )
+      generate_prompt = @context_builder.build_generate_prompt(context)
       @logger.info("Pipeline generate pass started (model=#{@config.generate_model})")
       candidates_raw = @reviewer.generate(**generate_prompt)
       generate_result = parse_with_repair(
@@ -48,12 +50,7 @@ module Aireview
 
       accepted = if critique
                    @logger.info("Pipeline critique pass started (model=#{@config.critique_model})")
-                   critique_candidates(
-                     merge_request: merge_request,
-                     changes_text: changes_text,
-                     jira_issue: jira_issue,
-                     candidates: candidates
-                   )
+                   critique_candidates(context: context, candidates: candidates)
                  else
                    @logger.info('Pipeline critique pass skipped')
                    candidates
@@ -61,25 +58,22 @@ module Aireview
 
       @logger.info("Pipeline finished with #{accepted.size} accepted finding(s)")
 
-      ReviewRenderer.new(language: @config.review_language).render(accepted, summary: summary)
+      renderer = ReviewRenderer.new(language: @config.review_language)
+      renderer.render(accepted, summary: summary, coverage: context.coverage)
     end
 
-    def dry_run_prompts(merge_request:, changes_text:, jira_issue: nil, critique: true)
+    def dry_run_prompts(merge_request:, changes:, jira_issue: nil, critique: true)
       @config.require_models!
 
-      generate_prompt = @context_builder.build_generate_prompt(
+      context = @context_builder.prepare(
         merge_request: merge_request,
-        changes_text: changes_text,
-        jira_issue: jira_issue
+        changes: changes,
+        jira_issue: jira_issue,
+        critique: critique
       )
-
+      generate_prompt = @context_builder.build_generate_prompt(context)
       critique_prompt = if critique
-                          @context_builder.build_critique_prompt(
-                            merge_request: merge_request,
-                            changes_text: changes_text,
-                            jira_issue: jira_issue,
-                            candidates_json: DRY_RUN_CANDIDATES_JSON
-                          )
+                          @context_builder.build_critique_prompt(context, candidates_json: DRY_RUN_CANDIDATES_JSON)
                         end
 
       {
@@ -88,21 +82,18 @@ module Aireview
         generate_model: @config.generate_model,
         generate_temperature: @config.generate_temperature,
         critique_model: @config.critique_model,
-        critique_temperature: @config.critique_temperature
+        critique_temperature: @config.critique_temperature,
+        coverage: context.coverage,
+        sizes: context.sizes
       }
     end
 
     private
 
-    def critique_candidates(merge_request:, changes_text:, jira_issue:, candidates:)
+    def critique_candidates(context:, candidates:)
       candidates_json = JSON.pretty_generate(candidates)
       candidates_by_id = index_candidates_by_id(candidates)
-      critique_prompt = @context_builder.build_critique_prompt(
-        merge_request: merge_request,
-        changes_text: changes_text,
-        jira_issue: jira_issue,
-        candidates_json: candidates_json
-      )
+      critique_prompt = @context_builder.build_critique_prompt(context, candidates_json: candidates_json)
       critique_raw = @reviewer.critique(**critique_prompt)
       critique_result = parse_with_repair(
         raw: critique_raw,
@@ -284,10 +275,11 @@ module Aireview
       end
 
       @logger.info("Pipeline #{stage} repair started for #{kind}")
+      prompt = @context_builder.check_stage_size!(stage, REPAIR_SYSTEM_PROMPT, user_prompt)
       if stage == :critique
-        @reviewer.critique(system_prompt: REPAIR_SYSTEM_PROMPT, user_prompt: user_prompt)
+        @reviewer.critique(**prompt)
       else
-        @reviewer.generate(system_prompt: REPAIR_SYSTEM_PROMPT, user_prompt: user_prompt)
+        @reviewer.generate(**prompt)
       end
     end
 

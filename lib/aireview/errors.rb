@@ -4,5 +4,6 @@ module Aireview
   class ConfigError < Error; end
   class ParseError < Error; end
   class ApiError < Error; end
+  class ContextBudgetError < Error; end
   class HelpRequested < Error; end
 end

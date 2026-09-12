@@ -65,6 +65,39 @@ RSpec.describe Aireview::ReviewMarker do
     it 'looks like a short hex digest' do
       expect(described_class.key(prompts: prompts, config: config)).to match(/\A[0-9a-f]{16}\z/)
     end
+
+    context 'with prompts built through the context budget' do
+      let(:merge_request) do
+        {
+          'title' => 'Fix totals',
+          'description' => 'A' * 100,
+          'source_branch' => 'fix',
+          'target_branch' => 'main',
+          'author' => {'name' => 'Denis'}
+        }
+      end
+      let(:changes) do
+        [{'old_path' => 'a.rb', 'new_path' => 'a.rb', 'diff' => "@@ -1 +1 @@\n-old\n+new\n"}]
+      end
+
+      def key_for(context_overrides)
+        pipeline = Aireview::ReviewPipeline.new(
+          config: config('context' => context_overrides),
+          reviewer: instance_double(Aireview::Reviewer),
+          logger: Logger.new(File::NULL)
+        )
+        prompts = pipeline.dry_run_prompts(merge_request: merge_request, changes: changes)
+        described_class.key(prompts: prompts, config: config)
+      end
+
+      it 'changes when a limit truncates the context' do
+        expect(key_for('max_mr_description_chars' => 50)).not_to eq(key_for('max_mr_description_chars' => 500))
+      end
+
+      it 'stays the same when a limit does not change the prompt' do
+        expect(key_for('max_diff_chars' => 5_000)).to eq(key_for('max_diff_chars' => 50_000))
+      end
+    end
   end
 
   describe '.state' do

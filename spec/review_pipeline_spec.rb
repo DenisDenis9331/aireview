@@ -11,6 +11,11 @@ RSpec.describe Aireview::ReviewPipeline do
       review_language: 'en',
       secret_patterns: [],
       secret_files: [],
+      max_prompt_chars: 400_000,
+      max_diff_chars: 120_000,
+      max_mr_description_chars: 8_000,
+      max_jira_description_chars: 8_000,
+      max_jira_comment_chars: 2_000,
       generate_model: 'gemini-generate',
       generate_temperature: 0.3,
       critique_model: 'gemini-critique',
@@ -32,11 +37,14 @@ RSpec.describe Aireview::ReviewPipeline do
     }
   end
 
-  let(:changes_text) do
-    <<~DIFF
-      diff --git a/app/models/order.rb b/app/models/order.rb
-      +total = subtotal
-    DIFF
+  let(:changes) do
+    [
+      {
+        'old_path' => 'app/models/order.rb',
+        'new_path' => 'app/models/order.rb',
+        'diff' => "@@ -10,3 +10,3 @@\n-total = subtotal + tax\n+total = subtotal\n"
+      }
+    ]
   end
 
   let(:candidates) do
@@ -87,7 +95,7 @@ RSpec.describe Aireview::ReviewPipeline do
       )
     )
 
-    result = pipeline.run(merge_request: merge_request, changes_text: changes_text)
+    result = pipeline.run(merge_request: merge_request, changes: changes)
 
     expect(result).to include('MR recalculates order totals during checkout.')
     expect(result).to include('Tax is no longer included')
@@ -104,7 +112,7 @@ RSpec.describe Aireview::ReviewPipeline do
       )
     )
 
-    result = pipeline.run(merge_request: merge_request, changes_text: changes_text)
+    result = pipeline.run(merge_request: merge_request, changes: changes)
 
     expect(result).to include('MR recalculates order totals during checkout.')
     expect(result).to include('None found.')
@@ -122,7 +130,7 @@ RSpec.describe Aireview::ReviewPipeline do
     )
     allow(JSON).to receive(:parse).and_call_original
 
-    result = pipeline.run(merge_request: merge_request, changes_text: changes_text)
+    result = pipeline.run(merge_request: merge_request, changes: changes)
 
     expect(JSON).not_to have_received(:parse)
     expect(reviewer).to have_received(:generate).once
@@ -133,7 +141,7 @@ RSpec.describe Aireview::ReviewPipeline do
   it 'continues processing JSON strings without repair' do
     allow(reviewer).to receive(:generate).and_return(generate_result([candidates.first]))
 
-    result = pipeline.run(merge_request: merge_request, changes_text: changes_text, critique: false)
+    result = pipeline.run(merge_request: merge_request, changes: changes, critique: false)
 
     expect(reviewer).to have_received(:generate).once
     expect(result).to include('Tax is no longer included')
@@ -144,7 +152,7 @@ RSpec.describe Aireview::ReviewPipeline do
     allow(reviewer).to receive(:generate).and_return(invalid_result)
 
     expect do
-      pipeline.run(merge_request: merge_request, changes_text: changes_text, critique: false)
+      pipeline.run(merge_request: merge_request, changes: changes, critique: false)
     end.to raise_error(
       Aireview::ParseError,
       /invalid generate result: each generate candidate must include a non-empty id/
@@ -158,7 +166,7 @@ RSpec.describe Aireview::ReviewPipeline do
     )
 
     expect do
-      pipeline.run(merge_request: merge_request, changes_text: changes_text, critique: false)
+      pipeline.run(merge_request: merge_request, changes: changes, critique: false)
     end.to raise_error(
       Aireview::ParseError,
       /invalid generate result: each generate candidate must be an object/
@@ -170,7 +178,7 @@ RSpec.describe Aireview::ReviewPipeline do
     allow(reviewer).to receive(:generate).and_return(nil)
 
     expect do
-      pipeline.run(merge_request: merge_request, changes_text: changes_text, critique: false)
+      pipeline.run(merge_request: merge_request, changes: changes, critique: false)
     end.to raise_error(Aireview::ParseError, /unsupported generate result type: NilClass/)
     expect(reviewer).to have_received(:generate).once
   end
@@ -182,7 +190,7 @@ RSpec.describe Aireview::ReviewPipeline do
     )
 
     expect do
-      pipeline.run(merge_request: merge_request, changes_text: changes_text)
+      pipeline.run(merge_request: merge_request, changes: changes)
     end.to raise_error(Aireview::ParseError, /invalid critique result: unknown verdict ids: C9/)
     expect(reviewer).to have_received(:critique).once
   end
@@ -192,7 +200,7 @@ RSpec.describe Aireview::ReviewPipeline do
     allow(reviewer).to receive(:critique).and_return({ 'verdicts' => [42] })
 
     expect do
-      pipeline.run(merge_request: merge_request, changes_text: changes_text)
+      pipeline.run(merge_request: merge_request, changes: changes)
     end.to raise_error(
       Aireview::ParseError,
       /invalid critique result: each critique verdict must be an object/
@@ -203,7 +211,7 @@ RSpec.describe Aireview::ReviewPipeline do
   it 'repairs invalid generate JSON once' do
     allow(reviewer).to receive(:generate).and_return('not json', generate_result([candidates.first]))
 
-    result = pipeline.run(merge_request: merge_request, changes_text: changes_text, critique: false)
+    result = pipeline.run(merge_request: merge_request, changes: changes, critique: false)
 
     expect(reviewer).to have_received(:generate).twice
     expect(result).to include('Tax is no longer included')
@@ -212,7 +220,7 @@ RSpec.describe Aireview::ReviewPipeline do
   it 'accepts a structured Hash returned by a repair request for a JSON string' do
     allow(reviewer).to receive(:generate).and_return('not json', structured_generate_result([candidates.first]))
 
-    result = pipeline.run(merge_request: merge_request, changes_text: changes_text, critique: false)
+    result = pipeline.run(merge_request: merge_request, changes: changes, critique: false)
 
     expect(reviewer).to have_received(:generate).twice
     expect(result).to include('Tax is no longer included')
@@ -222,7 +230,7 @@ RSpec.describe Aireview::ReviewPipeline do
     invalid_generate = JSON.generate(summary: 'bad', candidates: [{ file: 'app/models/order.rb' }])
     allow(reviewer).to receive(:generate).and_return(invalid_generate, generate_result([candidates.first]))
 
-    result = pipeline.run(merge_request: merge_request, changes_text: changes_text, critique: false)
+    result = pipeline.run(merge_request: merge_request, changes: changes, critique: false)
 
     expect(reviewer).to have_received(:generate).twice
     expect(result).to include('Tax is no longer included')
@@ -232,7 +240,7 @@ RSpec.describe Aireview::ReviewPipeline do
     allow(reviewer).to receive(:generate).and_return('not json', 'still not json')
 
     expect do
-      pipeline.run(merge_request: merge_request, changes_text: changes_text, critique: false)
+      pipeline.run(merge_request: merge_request, changes: changes, critique: false)
     end.to raise_error(Aireview::ParseError, /invalid generate result JSON after repair/)
   end
 
@@ -243,7 +251,7 @@ RSpec.describe Aireview::ReviewPipeline do
       JSON.generate(verdicts: [{ id: 'C1', decision: 'keep', reason: 'confirmed by diff' }])
     )
 
-    result = pipeline.run(merge_request: merge_request, changes_text: changes_text)
+    result = pipeline.run(merge_request: merge_request, changes: changes)
 
     expect(reviewer).to have_received(:critique).twice
     expect(result).to include('Tax is no longer included')
@@ -257,7 +265,7 @@ RSpec.describe Aireview::ReviewPipeline do
     JSON
     allow(reviewer).to receive(:generate).and_return(fenced_generate)
 
-    result = pipeline.run(merge_request: merge_request, changes_text: changes_text, critique: false)
+    result = pipeline.run(merge_request: merge_request, changes: changes, critique: false)
 
     expect(reviewer).to have_received(:generate).once
     expect(result).to include('Tax is no longer included')
@@ -274,7 +282,7 @@ RSpec.describe Aireview::ReviewPipeline do
       JSON
     )
 
-    result = pipeline.run(merge_request: merge_request, changes_text: changes_text)
+    result = pipeline.run(merge_request: merge_request, changes: changes)
 
     expect(reviewer).to have_received(:critique).twice
     expect(result).to include('Tax is no longer included')
@@ -284,7 +292,7 @@ RSpec.describe Aireview::ReviewPipeline do
     allow(reviewer).to receive(:generate).and_return(generate_result([candidates.first]))
     allow(reviewer).to receive(:critique)
 
-    result = pipeline.run(merge_request: merge_request, changes_text: changes_text, critique: false)
+    result = pipeline.run(merge_request: merge_request, changes: changes, critique: false)
 
     expect(reviewer).not_to have_received(:critique)
     expect(result).to include('Tax is no longer included')
@@ -299,7 +307,7 @@ RSpec.describe Aireview::ReviewPipeline do
       )
     )
 
-    result = pipeline.run(merge_request: merge_request, changes_text: changes_text)
+    result = pipeline.run(merge_request: merge_request, changes: changes)
 
     expect(result).to include('Confirmed bug 1')
     expect(result).to include('Confirmed bug 2')
@@ -315,7 +323,7 @@ RSpec.describe Aireview::ReviewPipeline do
       )
     )
 
-    result = pipeline.run(merge_request: merge_request, changes_text: changes_text)
+    result = pipeline.run(merge_request: merge_request, changes: changes)
 
     expect(result).to include('Confirmed bug 1')
     expect(result).to include('Confirmed bug 2')
@@ -330,7 +338,7 @@ RSpec.describe Aireview::ReviewPipeline do
       JSON.generate(verdicts: [{ id: 'C1', decision: 'keep', reason: 'confirmed by diff' }])
     )
 
-    result = pipeline.run(merge_request: merge_request, changes_text: changes_text)
+    result = pipeline.run(merge_request: merge_request, changes: changes)
 
     expect(result).not_to include('Name is unclear')
     expect(result).to include('## Important findings')
@@ -344,7 +352,7 @@ RSpec.describe Aireview::ReviewPipeline do
       JSON.generate(verdicts: [{ id: 'C1', decision: 'keep', reason: 'confirmed by diff' }])
     )
 
-    result = pipeline.run(merge_request: merge_request, changes_text: changes_text)
+    result = pipeline.run(merge_request: merge_request, changes: changes)
 
     expect(result).to eq(<<~MARKDOWN.rstrip)
       ## Summary
@@ -379,7 +387,7 @@ RSpec.describe Aireview::ReviewPipeline do
       JSON.generate(verdicts: [{ id: 'C1', decision: 'keep', reason: 'confirmed by diff' }])
     )
 
-    stage_pipeline.run(merge_request: merge_request, changes_text: changes_text)
+    stage_pipeline.run(merge_request: merge_request, changes: changes)
 
     expect(log_output.string).to include('Pipeline generate pass started (model=gemini-generate)')
     expect(log_output.string).to include('Pipeline generate pass completed with 1 candidate(s)')
@@ -388,8 +396,41 @@ RSpec.describe Aireview::ReviewPipeline do
     expect(log_output.string).to include('Pipeline finished with 1 accepted finding(s)')
   end
 
+  it 'passes coverage from the context to the report and to dry-run output' do
+    config = instance_double(
+      'Aireview::Config',
+      require_models!: true, review_instructions: nil, review_language: 'en',
+      secret_patterns: [], secret_files: [],
+      max_prompt_chars: 400_000, max_diff_chars: 600, max_mr_description_chars: 8_000,
+      max_jira_description_chars: 8_000, max_jira_comment_chars: 2_000,
+      generate_model: 'g', generate_temperature: 0, critique_model: 'c', critique_temperature: 0
+    )
+    pipeline = described_class.new(config: config, reviewer: reviewer, logger: logger)
+    big = changes.first.merge('new_path' => 'big.rb', 'old_path' => 'big.rb', 'diff' => "@@ -1,3 +1,3 @@\n#{"+x\n" * 300}")
+    allow(reviewer).to receive(:generate).and_return(generate_result([]))
+
+    result = pipeline.run(merge_request: merge_request, changes: changes + [big], critique: false)
+    dry_run = pipeline.dry_run_prompts(merge_request: merge_request, changes: changes + [big])
+
+    expect(result).to include('ok. Partial review: 1 files not reviewed.')
+    expect(result).to include("## Not reviewed\n\n- big.rb")
+    expect(dry_run[:coverage].files_not_shown).to eq(['big.rb'])
+    expect(dry_run[:sizes][:diff_budget]).to eq(600)
+    expect(dry_run.dig(:generate_prompt, :user_prompt)).to include('[1 file(s) not shown: big.rb]')
+  end
+
+  it 'refuses a repair request that exceeds the stage limit' do
+    allow(config).to receive(:max_prompt_chars).with(:generate).and_return(5_000)
+    allow(config).to receive(:max_prompt_chars).with(:critique).and_return(400_000)
+    allow(reviewer).to receive(:generate).and_return('not json ' * 1_000)
+
+    expect { pipeline.run(merge_request: merge_request, changes: changes) }
+      .to raise_error(Aireview::ContextBudgetError, /Generate request is \d+ chars, over llm.generate.max_prompt_chars=5000/)
+    expect(reviewer).to have_received(:generate).once
+  end
+
   it 'validates LLM models before rendering dry-run prompts' do
-    pipeline.dry_run_prompts(merge_request: merge_request, changes_text: changes_text)
+    pipeline.dry_run_prompts(merge_request: merge_request, changes: changes)
 
     expect(config).to have_received(:require_models!)
     expect(config).not_to have_received(:require_llm_configuration!)
@@ -419,7 +460,7 @@ RSpec.describe Aireview::ReviewPipeline do
       )
     )
 
-    result = pipeline.run(merge_request: merge_request, changes_text: changes_text)
+    result = pipeline.run(merge_request: merge_request, changes: changes)
 
     expect(result).to include('- **Where**: app/models/order.rb:12')
     expect(result).to include('Refined problem')
@@ -446,7 +487,7 @@ RSpec.describe Aireview::ReviewPipeline do
     )
 
     expect do
-      pipeline.run(merge_request: merge_request, changes_text: changes_text)
+      pipeline.run(merge_request: merge_request, changes: changes)
     end.to raise_error(Aireview::ParseError, /missing verdict ids: C3/)
   end
 
@@ -458,7 +499,7 @@ RSpec.describe Aireview::ReviewPipeline do
     )
 
     expect do
-      pipeline.run(merge_request: merge_request, changes_text: changes_text)
+      pipeline.run(merge_request: merge_request, changes: changes)
     end.to raise_error(Aireview::ParseError, /unknown verdict ids: C9/)
   end
 
@@ -480,7 +521,7 @@ RSpec.describe Aireview::ReviewPipeline do
     )
 
     expect do
-      pipeline.run(merge_request: merge_request, changes_text: changes_text)
+      pipeline.run(merge_request: merge_request, changes: changes)
     end.to raise_error(Aireview::ParseError, /duplicate verdict ids: C1/)
   end
 
@@ -492,7 +533,7 @@ RSpec.describe Aireview::ReviewPipeline do
     )
 
     expect do
-      pipeline.run(merge_request: merge_request, changes_text: changes_text)
+      pipeline.run(merge_request: merge_request, changes: changes)
     end.to raise_error(Aireview::ParseError, /invalid verdict decision for C1/)
   end
 
@@ -522,7 +563,7 @@ RSpec.describe Aireview::ReviewPipeline do
     )
 
     expect do
-      pipeline.run(merge_request: merge_request, changes_text: changes_text)
+      pipeline.run(merge_request: merge_request, changes: changes)
     end.to raise_error(Aireview::ParseError, /reject verdict cannot include refinement for C1/)
   end
 
@@ -532,7 +573,7 @@ RSpec.describe Aireview::ReviewPipeline do
       JSON.generate(verdicts: [{ id: ' C1 ', decision: ' keep ', reason: 'confirmed by diff' }])
     )
 
-    result = pipeline.run(merge_request: merge_request, changes_text: changes_text)
+    result = pipeline.run(merge_request: merge_request, changes: changes)
 
     expect(result).to include('Tax is no longer included')
   end
@@ -556,7 +597,7 @@ RSpec.describe Aireview::ReviewPipeline do
       )
     )
 
-    result = pipeline.run(merge_request: merge_request, changes_text: changes_text)
+    result = pipeline.run(merge_request: merge_request, changes: changes)
 
     expect(result).to include('Tax is no longer included')
     expect(result).to include('Refined impact')
