@@ -50,12 +50,21 @@ RSpec.describe Aireview::DiffFetcher::Entry do
     expect(parsed.hunks).to eq(["[REDACTED: secret file config/secrets.yml]\n"])
   end
 
-  it 'marks a rename without content changes as having no text changes' do
-    parsed = entry('', 'renamed_file' => true)
+  it 'marks explained empty diffs as having no text changes' do
+    expect(entry('', 'renamed_file' => true).kind).to eq(:no_text_changes)
+    expect(entry('', 'new_file' => true).kind).to eq(:no_text_changes)
+    expect(entry('', 'deleted_file' => true).kind).to eq(:no_text_changes)
+    expect(entry('', 'a_mode' => '100644', 'b_mode' => '100755').kind).to eq(:no_text_changes)
+    expect(entry('', 'renamed_file' => true).render).to end_with("[no text changes]\n")
+  end
 
-    expect(parsed.kind).to eq(:no_text_changes)
-    expect(parsed).not_to be_unavailable
-    expect(parsed.render).to end_with("[no text changes]\n")
+  it 'marks an unexplained empty diff as unavailable' do
+    parsed = entry('', 'renamed_file' => false, 'new_file' => false, 'deleted_file' => false,
+                       'a_mode' => '100644', 'b_mode' => '100644')
+
+    expect(parsed.kind).to eq(:unavailable)
+    expect(parsed).to be_unavailable
+    expect(entry('').kind).to eq(:unavailable)
   end
 
   it 'marks too large and binary diffs as unavailable' do

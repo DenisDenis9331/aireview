@@ -114,6 +114,16 @@ RSpec.describe Aireview::ContextBudget do
       expect(packed.shown_hunks).to eq(1)
     end
 
+    it 'reports an unexplained empty diff as unavailable, not as complete coverage' do
+      changes = [change('a.rb', '')]
+
+      packed, coverage = pack(changes, budget: 10_000)
+
+      expect(packed.text).to include('[diff not available]')
+      expect(coverage.files_unavailable).to eq(['a.rb'])
+      expect(coverage).not_to be_complete
+    end
+
     it 'is not an error when a merge request has no text hunks at all' do
       changes = [change('a.rb', '', 'renamed_file' => true)]
 
@@ -136,6 +146,33 @@ RSpec.describe Aireview::ContextBudget do
 
       expect { pack(changes, budget: trailer + 100) }
         .to raise_error(Aireview::ContextBudgetError, /not a single hunk fits/)
+    end
+
+    it 'never exceeds the budget even with many oversized hunks and their markers' do
+      diff = hunk(1, lines: 3) + Array.new(20) { |i| hunk(i + 2, lines: 200) }.join
+      changes = [change('a.rb', diff), change('b.rb', hunk(30, lines: 3))]
+
+      [600, 700, 800, 1_000, 1_500].each do |budget|
+        packed, coverage = pack(changes, budget: budget)
+
+        expect(packed.text.length).to be <= budget
+        expect(packed.text).to include('+1.0')
+        expect(coverage.hunks_skipped.size).to eq(20)
+      end
+    end
+
+    it 'counts separators between files against the budget' do
+      changes = Array.new(6) { |i| change("f#{i}.rb", hunk(i, lines: 40)) }
+      fetcher = Aireview::DiffFetcher.new(ignore_paths: [], logger: Logger.new(nil))
+      first_four = fetcher.render(changes.first(4)).length
+
+      exact, exact_coverage = pack(changes, budget: first_four + trailer)
+      expect(exact_coverage.files_not_shown).to eq(['f4.rb', 'f5.rb'])
+      expect(exact.text.length).to be <= first_four + trailer
+
+      short, short_coverage = pack(changes, budget: first_four + trailer - 1)
+      expect(short_coverage.files_not_shown).to eq(['f3.rb', 'f4.rb', 'f5.rb'])
+      expect(short.text.length).to be <= first_four + trailer - 1
     end
 
     it 'caps the list of files that were not shown' do

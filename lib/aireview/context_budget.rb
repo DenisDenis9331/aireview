@@ -63,9 +63,11 @@ module Aireview
       private
 
       # Что-то придётся опустить, значит нужен хвост со списком пропущенного.
+      # @used считает весь собранный текст, включая разделители между
+      # файлами: результат не должен выйти за бюджет ни на символ.
       def pack_within_limit
         @parts = @non_text.map(&:render)
-        @used = @parts.sum(&:length)
+        @used = joined_length(@parts)
         @limit = @budget - TRAILER_RESERVE_CHARS
         raise_no_room!(:non_text) if @used > @limit
 
@@ -87,16 +89,21 @@ module Aireview
           end
 
           @parts << piece
-          @used += piece.length
+          @used = joined_length(@parts)
           shown_hunks += shown
         end
         shown_hunks
       end
 
+      # Место под следующий кусок с учётом разделителя перед ним.
+      def remaining
+        @limit - @used - (@parts.empty? ? 0 : 1)
+      end
+
       # Возвращает [текст, число показанных хунков, остановлена ли раскладка].
       def pack_entry(entry)
         full = entry.render
-        return [full, entry.hunks.size, false] if full.length <= @limit - @used
+        return [full, entry.hunks.size, false] if full.length <= remaining
 
         body, shown, skipped, stopped = pack_hunks(entry)
         return ['', 0, stopped] if shown.zero?
@@ -106,6 +113,10 @@ module Aireview
         [entry.header + body + partial_marker(entry, shown), shown, stopped]
       end
 
+      # Каждый хунк и каждая пометка о пропуске проверяются на оставшееся
+      # место вместе с заголовком файла и итоговой пометкой о частичности.
+      # Слишком большой хунк раскладку не останавливает: он попадает в
+      # покрытие, а пометка о нём попадает в текст, только если есть место.
       def pack_hunks(entry)
         base = entry.header.length + partial_marker(entry, 0).length
         body = +''
@@ -114,15 +125,24 @@ module Aireview
         entry.hunks.each_with_index do |hunk, index|
           if base + hunk.length > @limit
             skipped << (index + 1)
-            body << "[hunk #{index + 1} of #{entry.hunks.size} skipped: larger than the context budget]\n"
+            marker = skip_marker(entry, index)
+            body << marker if base + body.length + marker.length <= remaining
             next
           end
-          return [body, shown, skipped, true] if base + body.length + hunk.length > (@limit - @used)
+          return [body, shown, skipped, true] if base + body.length + hunk.length > remaining
 
           body << hunk
           shown += 1
         end
         [body, shown, skipped, false]
+      end
+
+      def skip_marker(entry, index)
+        "[hunk #{index + 1} of #{entry.hunks.size} skipped: larger than the context budget]\n"
+      end
+
+      def joined_length(parts)
+        parts.sum(&:length) + [parts.size - 1, 0].max
       end
 
       def partial_marker(entry, shown)
@@ -133,7 +153,7 @@ module Aireview
         paths = @coverage.files_not_shown
         listed = []
         paths.first(NOT_SHOWN_LIST_LIMIT).each do |path|
-          break if listed.sum(&:length) + path.length > TRAILER_RESERVE_CHARS - 100
+          break if listed.sum(&:length) + path.length > TRAILER_RESERVE_CHARS / 2
 
           listed << path
         end

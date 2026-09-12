@@ -10,8 +10,11 @@
   line gets a `Partial review` suffix and a `Not reviewed` section lists the
   files and sections that were left out. `--dry-run` and `--verbose` show the
   sizes and the coverage.
-- Renames and other changes without text are told apart from diffs GitLab did
-  not return (too large, binary); the latter are reported as not reviewed.
+- Renames, mode changes and empty new or deleted files are told apart from
+  diffs GitLab did not return (too large, binary, empty without a reason); the
+  latter are reported as not reviewed.
+- Unparsable limits in the environment (`MAX_DIFF_CHARS=oops`) fail with a
+  `ConfigError` instead of silently falling back to the defaults.
 - A run fails with a clear error when not even one hunk fits next to the
   system prompt, or when the candidates push the Critique request over its
   limit.

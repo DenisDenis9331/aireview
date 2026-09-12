@@ -195,6 +195,17 @@ RSpec.describe Aireview::Config do
       end
     end
 
+    it 'rejects unparsable limits from the environment instead of falling back to defaults' do
+      Dir.mktmpdir do |dir|
+        expect { described_class.load(cwd: dir, env: {'LLM_MAX_PROMPT_CHARS' => '8k'}, logger: Logger.new(nil)) }
+          .to raise_error(Aireview::ConfigError, 'LLM_MAX_PROMPT_CHARS must be an integer, got "8k"')
+        expect { described_class.load(cwd: dir, env: {'MAX_DIFF_CHARS' => 'oops'}, logger: Logger.new(nil)) }
+          .to raise_error(Aireview::ConfigError, 'MAX_DIFF_CHARS must be an integer, got "oops"')
+        expect { described_class.load(cwd: dir, env: {'LLM_CRITIQUE_MAX_PROMPT_CHARS' => '1.5'}, logger: Logger.new(nil)) }
+          .to raise_error(Aireview::ConfigError, 'LLM_CRITIQUE_MAX_PROMPT_CHARS must be an integer, got "1.5"')
+      end
+    end
+
     it 'rejects non-positive or non-integer context limits' do
       Dir.mktmpdir do |dir|
         File.write(File.join(dir, '.aireview.yml'), "context:\n  max_diff_chars: 0\nllm:\n  max_prompt_chars: abc\n")

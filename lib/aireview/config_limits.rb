@@ -23,18 +23,20 @@ module Aireview
     module ClassMethods
       def context_env_config(env)
         context = CONTEXT_ENV.each_with_object({}) do |(key, env_key), config|
-          value = parse_integer(env[env_key])
+          value = parse_integer(env[env_key], env_key)
           config[key] = value unless value.nil?
         end
         context.empty? ? {} : {'context' => context}
       end
 
-      def parse_integer(value)
+      # Лимит, который не разобрался, нельзя молча заменять дефолтом: запрос
+      # уйдёт в модель с окном, которого у неё нет.
+      def parse_integer(value, name)
         return nil if Aireview::Utils.blank?(value)
 
         Integer(value.to_s, 10)
       rescue ArgumentError
-        nil
+        raise ConfigError, "#{name} must be an integer, got #{value.inspect}"
       end
     end
 

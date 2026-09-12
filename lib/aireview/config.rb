@@ -119,7 +119,7 @@ module Aireview
         'provider' => env['LLM_PROVIDER'],
         'temperature' => parse_float(env['LLM_TEMPERATURE']),
         'timeout' => parse_float(env['LLM_TIMEOUT']),
-        'max_prompt_chars' => parse_integer(env['LLM_MAX_PROMPT_CHARS']),
+        'max_prompt_chars' => parse_integer(env['LLM_MAX_PROMPT_CHARS'], 'LLM_MAX_PROMPT_CHARS'),
         'generate' => llm_stage_env_config(env, 'GENERATE'),
         'critique' => llm_stage_env_config(env, 'CRITIQUE')
       }.compact.reject { |key, value| %w[generate critique].include?(key) && value.empty? }
@@ -130,7 +130,7 @@ module Aireview
         'provider' => env["LLM_#{stage}_PROVIDER"],
         'model' => env["LLM_#{stage}_MODEL"],
         'temperature' => parse_float(env["LLM_#{stage}_TEMPERATURE"]),
-        'max_prompt_chars' => parse_integer(env["LLM_#{stage}_MAX_PROMPT_CHARS"])
+        'max_prompt_chars' => parse_integer(env["LLM_#{stage}_MAX_PROMPT_CHARS"], "LLM_#{stage}_MAX_PROMPT_CHARS")
       }.compact
     end
 

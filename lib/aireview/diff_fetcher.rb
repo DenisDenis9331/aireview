@@ -12,8 +12,8 @@ module Aireview
     #   :text            есть хунки, код можно проверить;
     #   :no_text_changes переименование, смена режима, пустой файл: проверять
     #                    нечего;
-    #   :unavailable     GitLab не отдал дифф (too_large) или файл бинарный:
-    #                    код есть, но проверить его не удалось.
+    #   :unavailable     GitLab не отдал дифф (too_large, бинарник, пустой
+    #                    дифф без причины): код есть, но проверить его не удалось.
     class Entry
       attr_reader :path, :kind, :header, :hunks
 
@@ -49,12 +49,22 @@ module Aireview
 
       private
 
+      # Пустой дифф без объяснимой причины (переименование, смена режима,
+      # пустой новый или удалённый файл) считаем недоступным: код есть, но
+      # GitLab его не отдал.
       def classify(change, diff)
         return :unavailable if change['too_large']
         return :unavailable if diff.match?(BINARY_DIFF)
-        return :no_text_changes if diff.strip.empty?
+        return :text unless diff.strip.empty?
 
-        :text
+        empty_diff_explained?(change) ? :no_text_changes : :unavailable
+      end
+
+      def empty_diff_explained?(change)
+        return true if %w[renamed_file new_file deleted_file].any? { |flag| change[flag] }
+
+        modes = change.values_at('a_mode', 'b_mode')
+        modes.none?(&:nil?) && modes.uniq.size == 2
       end
 
       # Хунки режем по заголовкам @@; текст до первого @@ (или дифф без них,
