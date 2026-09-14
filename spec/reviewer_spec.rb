@@ -201,11 +201,11 @@ RSpec.describe Aireview::Reviewer do
       attempts = 0
       allow(reviewer).to receive(:rand)
         .with(described_class::OVERLOADED_RETRY_JITTER_RANGE)
-        .and_return(1.0, 1.1, 0.9)
+        .and_return(1.0, 1.1, 0.9, 1.0)
       allow(reviewer).to receive(:sleep)
       allow(generate_chat).to receive(:ask).with('user prompt') do
         attempts += 1
-        raise RubyLLM::ServiceUnavailableError, 'This model is currently experiencing high demand' if attempts <= 3
+        raise RubyLLM::ServiceUnavailableError, 'This model is currently experiencing high demand' if attempts <= 4
 
         generate_response
       end
@@ -213,17 +213,18 @@ RSpec.describe Aireview::Reviewer do
       result = reviewer.generate(system_prompt: 'system prompt', user_prompt: 'user prompt')
 
       expect(result).to eq('generate body')
-      expect(attempts).to eq(4)
+      expect(attempts).to eq(5)
       expect(reviewer).to have_received(:sleep).with(120.0).once
       expect(reviewer).to have_received(:sleep).with(330.0).once
       expect(reviewer).to have_received(:sleep).with(270.0).once
+      expect(reviewer).to have_received(:sleep).with(300.0).once
       expect(log_output.string).to include(
         'LLM generate request will sleep 120.0s before retry (overloaded backoff 120s, multiplier 1.00x) ' \
-        '(attempt 2/4, model=gemini-3.7-flash)'
+        '(attempt 2/5, model=gemini-3.7-flash)'
       )
       expect(log_output.string).to include(
-        'LLM generate request will sleep 270.0s before retry (overloaded backoff 300s, multiplier 0.90x) ' \
-        '(attempt 4/4, model=gemini-3.7-flash)'
+        'LLM generate request will sleep 300.0s before retry (overloaded backoff 300s, multiplier 1.00x) ' \
+        '(attempt 5/5, model=gemini-3.7-flash)'
       )
     end
 
@@ -242,9 +243,9 @@ RSpec.describe Aireview::Reviewer do
         /LLM service is temporarily unavailable or overloaded: This model is currently experiencing high demand/
       )
 
-      expect(generate_chat).to have_received(:ask).with('user prompt').exactly(4).times
+      expect(generate_chat).to have_received(:ask).with('user prompt').exactly(5).times
       expect(reviewer).to have_received(:sleep).with(120.0).once
-      expect(reviewer).to have_received(:sleep).with(300.0).twice
+      expect(reviewer).to have_received(:sleep).with(300.0).exactly(3).times
     end
   end
 

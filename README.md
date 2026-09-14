@@ -163,8 +163,8 @@ address with `/v1` matches the
 [Ollama configuration in RubyLLM](https://rubyllm.com/configuration/#provider-configuration).
 `LLM_TIMEOUT` sets the timeout of every LLM request in seconds; for a slow
 local model it can be raised. It does not apply to an "overloaded" (503)
-answer from the provider: such a request gets up to four attempts, the
-original one and three retries with pauses of about 2, 5 and 5 minutes, and
+answer from the provider: such a request gets up to five attempts, the
+original one and four retries with pauses of about 2, 5, 5 and 5 minutes, and
 only the failed stage is repeated, not the whole run.
 
 Project rules live in `.aireview.yml`. In YAML the `generate.model` and
@@ -373,8 +373,8 @@ aireview:
 ```
 
 `timeout: 45m` is a chosen ceiling, not a guarantee that every retry fits in:
-when the provider is overloaded, one stage can wait up to ~14 minutes of
-pauses plus up to four requests of `LLM_TIMEOUT` each, and there are two
+when the provider is overloaded, one stage can wait up to ~20 minutes of
+pauses plus up to five requests of `LLM_TIMEOUT` each, and there are two
 stages.
 
 Set secrets such as `GITLAB_TOKEN`, `GEMINI_API_KEY` and the optional Jira

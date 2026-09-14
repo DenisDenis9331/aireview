@@ -10,7 +10,7 @@ module Aireview
     TRANSIENT_RETRY_BASE_DELAY = 2.0
     TRANSIENT_RETRY_JITTER_RANGE = 2.0..5.0
     PROVIDER_RETRY_DELAY_MULTIPLIER_RANGE = 2.0..2.4
-    OVERLOADED_RETRY_DELAYS = [120.0, 300.0, 300.0].freeze
+    OVERLOADED_RETRY_DELAYS = [120.0, 300.0, 300.0, 300.0].freeze
     OVERLOADED_RETRY_JITTER_RANGE = 0.85..1.15
     RETRY_WAIT_LOG_FORMAT = 'LLM %<stage>s request will sleep %<delay>.1fs before retry%<source>s ' \
                             '(attempt %<next_attempt>d/%<max_attempts>d, model=%<model>s)'
@@ -126,7 +126,13 @@ module Aireview
     end
 
     def retry_llm_request?(error, attempt)
-      transient_llm_error?(error) && attempt <= MAX_TRANSIENT_RETRIES
+      transient_llm_error?(error) && attempt <= max_retries(error)
+    end
+
+    # Перегруженному провайдеру даётся на один повтор больше: 503 у Gemini
+    # держится дольше, чем rate limit или сетевой сбой.
+    def max_retries(error)
+      overloaded_llm_error?(error) ? OVERLOADED_RETRY_DELAYS.size : MAX_TRANSIENT_RETRIES
     end
 
     def wait_before_retry(error:, attempt:, stage:, model:)
@@ -138,7 +144,7 @@ module Aireview
           delay: retry_delay[:delay],
           source: retry_delay_source(retry_delay),
           next_attempt: attempt + 1,
-          max_attempts: MAX_TRANSIENT_RETRIES + 1,
+          max_attempts: max_retries(error) + 1,
           model: model
         )
       )

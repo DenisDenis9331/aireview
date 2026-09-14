@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- An overloaded LLM (503) gets a fifth attempt: the pauses are now about
+  2, 5, 5 and 5 minutes. Rate limits and network errors keep their three
+  retries.
+
 ## 0.2.0
 
 - Context budget: `llm.max_prompt_chars` caps the request of each stage,
