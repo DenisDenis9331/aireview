@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
 - Fallback models per stage (`llm.<stage>.fallbacks`,
   `LLM_<STAGE>_FALLBACK_MODEL`) and fallback API keys (`GEMINI_API_KEYS`).
