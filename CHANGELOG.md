@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.1
 
 - An overloaded LLM (503) gets a fifth attempt: the pauses are now about
   2, 5, 5 and 5 minutes. Rate limits and network errors keep their three
