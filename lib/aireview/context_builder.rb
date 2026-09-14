@@ -23,7 +23,7 @@ module Aireview
 
     # Контекст одного прогона: обе стадии получают одинаковые MR, Jira и дифф,
     # усечённые один раз под самую тесную из стадий.
-    Context = Struct.new(:user_prompt, :coverage, :sizes, keyword_init: true)
+    Context = Struct.new(:user_prompt, :diff_text, :coverage, :sizes, keyword_init: true)
 
     def initialize(config:, logger: Logger.new($stderr))
       @config = config
@@ -49,7 +49,7 @@ module Aireview
 
       sizes = context_sizes(fixed: fixed, packed: packed, budget: budget, diff_budget: diff_budget, critique: critique)
       log_sizes(sizes)
-      Context.new(user_prompt: fixed + packed.text, coverage: coverage, sizes: sizes)
+      Context.new(user_prompt: fixed + packed.text, diff_text: packed.text, coverage: coverage, sizes: sizes)
     end
 
     def build_generate_prompt(context)

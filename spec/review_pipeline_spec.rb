@@ -19,11 +19,14 @@ RSpec.describe Aireview::ReviewPipeline do
       generate_model: 'gemini-generate',
       generate_temperature: 0.3,
       critique_model: 'gemini-critique',
-      critique_temperature: 0
+      critique_temperature: 0,
+      llm_time_budget: 1_800,
+      fallback_names: [],
+      api_key_counts: {'gemini' => 1}
     )
   end
 
-  let(:reviewer) { instance_double('Aireview::Reviewer') }
+  let(:reviewer) { instance_double('Aireview::Reviewer', fallback_models: {}) }
   let(:logger) { Logger.new(nil) }
   let(:pipeline) { described_class.new(config: config, reviewer: reviewer, logger: logger) }
 
@@ -403,7 +406,8 @@ RSpec.describe Aireview::ReviewPipeline do
       secret_patterns: [], secret_files: [],
       max_prompt_chars: 400_000, max_diff_chars: 600, max_mr_description_chars: 8_000,
       max_jira_description_chars: 8_000, max_jira_comment_chars: 2_000,
-      generate_model: 'g', generate_temperature: 0, critique_model: 'c', critique_temperature: 0
+      generate_model: 'g', generate_temperature: 0, critique_model: 'c', critique_temperature: 0,
+      llm_time_budget: 1_800, fallback_names: [], api_key_counts: {'gemini' => 1}
     )
     pipeline = described_class.new(config: config, reviewer: reviewer, logger: logger)
     big = changes.first.merge('new_path' => 'big.rb', 'old_path' => 'big.rb', 'diff' => "@@ -1,3 +1,3 @@\n#{"+x\n" * 300}")
@@ -427,6 +431,82 @@ RSpec.describe Aireview::ReviewPipeline do
     expect { pipeline.run(merge_request: merge_request, changes: changes) }
       .to raise_error(Aireview::ContextBudgetError, /Generate request is \d+ chars, over llm.generate.max_prompt_chars=5000/)
     expect(reviewer).to have_received(:generate).once
+  end
+
+  it 'reports the fallback model used by a stage and lists reserves in dry-run output' do
+    allow(config).to receive(:fallback_names).with(:generate).and_return(['gemini/g2'])
+    allow(config).to receive(:api_key_counts).with([:generate]).and_return('gemini' => 2)
+    allow(reviewer).to receive(:generate).and_return(generate_result([]))
+    allow(reviewer).to receive(:fallback_models).and_return('generate' => 'gemini/g2')
+
+    result = pipeline.run(merge_request: merge_request, changes: changes, critique: false)
+    dry_run = pipeline.dry_run_prompts(merge_request: merge_request, changes: changes, critique: false)
+
+    expect(result).to include('Fallback model used: generate — gemini/g2.')
+    expect(dry_run[:generate_fallbacks]).to eq(['gemini/g2'])
+    expect(dry_run[:critique_fallbacks]).to eq([])
+    expect(dry_run[:api_keys]).to eq('gemini' => 2)
+    expect(dry_run[:time_budget]).to eq(1_800)
+  end
+
+  it 'checks candidates against the shown diff before the critique pass' do
+    log_output = StringIO.new
+    pipeline = described_class.new(config: config, reviewer: reviewer, logger: Logger.new(log_output))
+    candidates = [
+      finding('C1', category: 'bug', problem: 'Quote is off').merge(quoted_code: 'total = subtotal * 2'),
+      finding('C2', category: 'bug', problem: 'Line is off').merge(line: 99),
+      finding('C3', category: 'bug', problem: 'File is off').merge(file: 'app/models/invoice.rb')
+    ]
+    allow(reviewer).to receive(:generate).and_return(generate_result(candidates))
+    allow(reviewer).to receive(:critique).and_return(
+      JSON.generate(verdicts: [{id: 'C1', decision: 'keep', reason: 'confirmed'},
+                               {id: 'C2', decision: 'keep', reason: 'confirmed'}])
+    )
+
+    result = pipeline.run(merge_request: merge_request, changes: changes)
+
+    expect(reviewer).to have_received(:critique) do |user_prompt:, **|
+      expect(user_prompt).to include('"note": "quoted_code not found in the diff shown to the model"')
+      expect(user_prompt).to include('"note": "line was outside the shown hunks and has been reset to null"')
+      expect(user_prompt).not_to include('C3')
+    end
+    expect(result).to include('- **Where**: app/models/order.rb:12 (quote not found in the diff)')
+    expect(result).to include("- **Where**: app/models/order.rb\n- **Problem**: Line is off")
+    expect(log_output.string).to include('Candidate C3 dropped: file "app/models/invoice.rb" is not in the merge request')
+  end
+
+  it 'keeps the missing-quote mark in the report without a critique pass' do
+    candidate = finding('C1', category: 'bug', problem: 'Quote is off').merge(quoted_code: 'nope')
+    allow(reviewer).to receive(:generate).and_return(generate_result([candidate]))
+
+    result = pipeline.run(merge_request: merge_request, changes: changes, critique: false)
+
+    expect(result).to include('- **Where**: app/models/order.rb:12 (quote not found in the diff)')
+    expect(result).to include('needs attention')
+  end
+
+  it 'skips the critique pass when every candidate points at a file outside the merge request' do
+    allow(reviewer).to receive(:generate)
+      .and_return(generate_result([finding('C1', category: 'bug', problem: 'x').merge(file: 'nope.rb')]))
+    allow(reviewer).to receive(:critique)
+
+    result = pipeline.run(merge_request: merge_request, changes: changes)
+
+    expect(reviewer).not_to have_received(:critique)
+    expect(result).to include("## Result\n\nok")
+  end
+
+  it 'skips the critique request when generate returns no candidates' do
+    log_output = StringIO.new
+    pipeline = described_class.new(config: config, reviewer: reviewer, logger: Logger.new(log_output))
+    allow(reviewer).to receive(:generate).and_return(generate_result([]))
+    allow(reviewer).to receive(:critique)
+
+    result = pipeline.run(merge_request: merge_request, changes: changes)
+
+    expect(result).to include("## Result\n\nok")
+    expect(reviewer).not_to have_received(:critique)
+    expect(log_output.string).to include('Pipeline critique pass skipped: no candidates')
   end
 
   it 'validates LLM models before rendering dry-run prompts' do

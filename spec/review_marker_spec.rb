@@ -62,6 +62,21 @@ RSpec.describe Aireview::ReviewMarker do
         .not_to eq(described_class.key(prompts: prompts, config: config))
     end
 
+    it 'ignores fallback models and extra keys: only the configured primary model counts' do
+      with_fallbacks = config(
+        'llm' => {
+          'provider' => 'gemini',
+          'temperature' => 0,
+          'generate' => {'model' => 'gemini-3.7-flash', 'fallbacks' => ['gemini-3.8-flash']},
+          'critique' => {'model' => 'gemini-3.8-flash', 'fallbacks' => [{'provider' => 'ollama', 'model' => 'q'}]}
+        },
+        'gemini_api_keys' => %w[one two]
+      )
+
+      expect(described_class.key(prompts: prompts, config: with_fallbacks))
+        .to eq(described_class.key(prompts: prompts, config: config))
+    end
+
     it 'looks like a short hex digest' do
       expect(described_class.key(prompts: prompts, config: config)).to match(/\A[0-9a-f]{16}\z/)
     end

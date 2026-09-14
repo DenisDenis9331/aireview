@@ -8,13 +8,7 @@ module Aireview
     end
 
     def render(dry_run)
-      @out.puts('=== LLM SETTINGS ===')
-      @out.puts("Generate: #{dry_run[:generate_model]} temperature=#{dry_run[:generate_temperature]}")
-      if dry_run[:critique_prompt]
-        @out.puts("Critique: #{dry_run[:critique_model]} temperature=#{dry_run[:critique_temperature]}")
-      else
-        @out.puts('Critique: disabled')
-      end
+      render_settings(dry_run)
       @out.puts
       @out.puts('=== CONTEXT ===')
       render_context_sizes(dry_run[:sizes])
@@ -37,6 +31,19 @@ module Aireview
 
     private
 
+    def render_settings(dry_run)
+      @out.puts('=== LLM SETTINGS ===')
+      @out.puts("Generate: #{dry_run[:generate_model]} temperature=#{dry_run[:generate_temperature]}")
+      list('fallbacks', dry_run[:generate_fallbacks], separator: ' -> ')
+      if dry_run[:critique_prompt]
+        @out.puts("Critique: #{dry_run[:critique_model]} temperature=#{dry_run[:critique_temperature]}")
+        list('fallbacks', dry_run[:critique_fallbacks], separator: ' -> ')
+      else
+        @out.puts('Critique: disabled')
+      end
+      render_reserves(dry_run)
+    end
+
     def render_context_sizes(sizes)
       @out.puts("Sections: #{sizes[:sections]} chars, diff: #{sizes[:diff]} chars " \
                 "(budget #{sizes[:diff_budget]}, hunks #{sizes[:hunks_shown]}/#{sizes[:hunks_total]})")
@@ -57,8 +64,15 @@ module Aireview
       list('diff not available', coverage.files_unavailable)
     end
 
-    def list(title, items)
-      @out.puts("  #{title}: #{items.join(', ')}") unless items.empty?
+    def render_reserves(dry_run)
+      keys = Array(dry_run[:api_keys]).map { |provider, count| "#{provider} #{count}" }
+      @out.puts("API keys: #{keys.join(', ')}") unless keys.empty?
+      @out.puts("Time budget: #{dry_run[:time_budget]}s") if dry_run[:time_budget]
+    end
+
+    def list(title, items, separator: ', ')
+      items = Array(items)
+      @out.puts("  #{title}: #{items.join(separator)}") unless items.empty?
     end
   end
 end

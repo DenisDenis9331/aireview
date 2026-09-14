@@ -109,6 +109,16 @@ RSpec.describe 'aireview review --post' do
     )
   end
 
+  it 'passes --no-fallbacks to the config so only the primary model and key are used' do
+    client = RecordingGitlabClient.new(merge_request: merge_request, changes: changes)
+    allow(Aireview::ReviewPipeline).to receive(:new) do |config:, **|
+      expect(config.fallbacks_disabled?).to be(true)
+      pipeline
+    end
+
+    expect(run_cli(client, '--no-fallbacks')).to eq(0)
+  end
+
   it 'publishes the review when the merge request stays put' do
     client = RecordingGitlabClient.new(merge_request: merge_request, changes: changes)
 

@@ -503,5 +503,125 @@ RSpec.describe Aireview::Config do
       end
     end
 
+
+    describe 'fallback models and keys' do
+      def load_with(dir, yaml: nil, env: {})
+        File.write(File.join(dir, '.aireview.yml'), yaml) if yaml
+        described_class.load(cwd: dir, env: env, logger: Logger.new(nil))
+      end
+
+      it 'builds the stage chain from YAML with the primary model first' do
+        Dir.mktmpdir do |dir|
+          config = load_with(dir, yaml: <<~YAML)
+            llm:
+              provider: gemini
+              max_prompt_chars: 100000
+              generate:
+                model: gemini-3.7-flash
+                fallbacks:
+                  - gemini-3.8-flash
+                  - provider: ollama
+                    model: qwen2.5-coder:7b
+                    max_prompt_chars: 20000
+              critique:
+                model: gemini-3.8-flash
+          YAML
+
+          chain = config.stage_chain(:generate)
+          expect(chain.map(&:to_s)).to eq(%w[gemini/gemini-3.7-flash gemini/gemini-3.8-flash ollama/qwen2.5-coder:7b])
+          expect(chain.map(&:max_prompt_chars)).to eq([100_000, 100_000, 20_000])
+          expect(config.stage_chain('critique').map(&:to_s)).to eq(['gemini/gemini-3.8-flash'])
+          expect(config.fallback_names(:generate)).to eq(%w[gemini/gemini-3.8-flash ollama/qwen2.5-coder:7b])
+          expect(config.api_key_counts(%i[generate critique])).to eq('gemini' => 0)
+        end
+      end
+
+      it 'reads fallback models from the environment over YAML' do
+        Dir.mktmpdir do |dir|
+          env = {
+            'LLM_GENERATE_MODEL' => 'gemini-3.7-flash',
+            'LLM_GENERATE_FALLBACK_MODEL' => 'gemini-3.8-flash, ollama/qwen2.5-coder:7b',
+            'LLM_CRITIQUE_MODEL' => 'gemini-3.8-flash',
+            'LLM_CRITIQUE_FALLBACK_MODEL' => 'gemini-3.7-flash'
+          }
+          config = load_with(dir, yaml: "llm:\n  generate:\n    fallbacks:\n      - from-yaml\n", env: env)
+
+          expect(config.stage_chain(:generate).map(&:to_s))
+            .to eq(%w[gemini/gemini-3.7-flash gemini/gemini-3.8-flash ollama/qwen2.5-coder:7b])
+          expect(config.stage_chain(:critique).map(&:to_s)).to eq(%w[gemini/gemini-3.8-flash gemini/gemini-3.7-flash])
+        end
+      end
+
+      it 'rejects a fallback without a model or with a bad limit' do
+        Dir.mktmpdir do |dir|
+          config = load_with(dir, yaml: "llm:\n  generate:\n    model: g\n    fallbacks:\n      - provider: ollama\n")
+          expect { config.stage_chain(:generate) }
+            .to raise_error(Aireview::ConfigError, 'llm.generate.fallbacks[0].model is required')
+
+          config = load_with(dir, yaml: "llm:\n  generate:\n    model: g\n    fallbacks:\n      - model: f\n        max_prompt_chars: 0\n")
+          expect { config.stage_chain(:generate) }
+            .to raise_error(Aireview::ConfigError, 'llm.generate.fallbacks[0].max_prompt_chars must be a positive integer, got 0')
+        end
+      end
+
+      it 'lists API keys in order, preferring GEMINI_API_KEYS over GEMINI_API_KEY' do
+        Dir.mktmpdir do |dir|
+          single = load_with(dir, env: {'GEMINI_API_KEY' => 'one'})
+          expect(single.provider_api_keys('gemini')).to eq(['one'])
+
+          many = load_with(dir, env: {'GEMINI_API_KEY' => 'one', 'GEMINI_API_KEYS' => 'two, three'})
+          expect(many.provider_api_keys(:gemini)).to eq(%w[two three])
+          expect(many.provider_api_key('gemini')).to eq('one')
+          expect(many.provider_api_keys('ollama')).to eq([nil])
+        end
+      end
+
+      it 'requires a key for every provider in the chains' do
+        Dir.mktmpdir do |dir|
+          config = load_with(dir, yaml: <<~YAML, env: {'GEMINI_API_KEY' => 'one'})
+            llm:
+              provider: ollama
+              generate:
+                model: qwen2.5-coder:7b
+                fallbacks:
+                  - provider: gemini
+                    model: gemini-3.8-flash
+              critique:
+                model: qwen2.5-coder:7b
+          YAML
+          expect { config.require_llm_configuration! }.not_to raise_error
+
+          config = load_with(dir, env: {})
+          expect { config.require_llm_configuration! }
+            .to raise_error(Aireview::ConfigError, 'generate: API key is required for provider "gemini"')
+        end
+      end
+
+      it 'keeps only the primary model and the first key when fallbacks are disabled' do
+        Dir.mktmpdir do |dir|
+          env = {
+            'LLM_GENERATE_MODEL' => 'g', 'LLM_GENERATE_FALLBACK_MODEL' => 'f',
+            'LLM_CRITIQUE_MODEL' => 'c', 'GEMINI_API_KEYS' => 'one,two'
+          }
+          config = load_with(dir, env: env).with_overrides(no_fallbacks: true, generate_model: 'cli')
+
+          expect(config.stage_chain(:generate).map(&:to_s)).to eq(['gemini/cli'])
+          expect(config.provider_api_keys('gemini')).to eq(['one'])
+          expect(config.fallbacks_disabled?).to be(true)
+          expect(config.fallback_names(:generate)).to eq([])
+          expect(config.api_key_counts(%i[generate critique])).to eq('gemini' => 1)
+        end
+      end
+
+      it 'reads the LLM time budget with a default of 30 minutes' do
+        Dir.mktmpdir do |dir|
+          expect(load_with(dir).llm_time_budget).to eq(1_800)
+          expect(load_with(dir, env: {'LLM_TIME_BUDGET' => '600'}).llm_time_budget).to eq(600)
+          expect(load_with(dir, yaml: "llm:\n  time_budget: 900\n").llm_time_budget).to eq(900)
+          expect { load_with(dir, env: {'LLM_TIME_BUDGET' => 'soon'}) }
+            .to raise_error(Aireview::ConfigError, 'LLM_TIME_BUDGET must be an integer, got "soon"')
+        end
+      end
+    end
   end
 end

@@ -44,7 +44,9 @@ module Aireview
         sections_truncated: 'sections truncated',
         hunks_of: 'hunks shown',
         diff_unavailable: 'diff not available',
-        section_list: 'Truncated sections'
+        section_list: 'Truncated sections',
+        fallback_used: 'Fallback model used',
+        quote_missing: 'quote not found in the diff'
       },
       'ru' => {
         summary: 'Сводка',
@@ -68,7 +70,9 @@ module Aireview
         sections_truncated: 'секций усечено',
         hunks_of: 'хунков показано',
         diff_unavailable: 'дифф недоступен',
-        section_list: 'Усечённые секции'
+        section_list: 'Усечённые секции',
+        fallback_used: 'Использована резервная модель',
+        quote_missing: 'цитата не найдена в диффе'
       }
     }.freeze
 
@@ -80,10 +84,8 @@ module Aireview
     # result по-прежнему про найденные проблемы; неполнота покрытия
     # дописывается рядом с ним, чтобы строка результата не читалась как
     # «проверено всё».
-    def render(accepted, summary:, coverage: nil)
-      findings = sorted_findings(Array(accepted)).first(TOTAL_FINDINGS_LIMIT)
-      mismatches = findings.select { |finding| category(finding) == 'task_mismatch' }.first(MISMATCH_LIMIT)
-      important = findings.select { |finding| important_finding?(finding) }.first(IMPORTANT_LIMIT)
+    def render(accepted, summary:, coverage: nil, fallback_models: {})
+      mismatches, important = select_findings(Array(accepted))
       result = mismatches.empty? && important.empty? ? 'ok' : 'needs attention'
 
       <<~MARKDOWN.rstrip
@@ -102,12 +104,24 @@ module Aireview
         ## #{label(:result)}
 
         #{result}#{partial_note(coverage)}
-        #{coverage_block(coverage)}
+        #{coverage_block(coverage)}#{fallback_note(fallback_models)}
         #{label(:disclaimer)}
       MARKDOWN
     end
 
     private
+
+    # Сначала отбор того, что вообще показывается, потом лимиты разделов и
+    # только затем общий лимит: находка, которую не показать из-за категории
+    # или лимита раздела, не должна занимать общий слот.
+    def select_findings(accepted)
+      sorted = sorted_findings(accepted)
+      mismatches = sorted.select { |finding| category(finding) == 'task_mismatch' }.first(MISMATCH_LIMIT)
+      important = sorted.select { |finding| important_finding?(finding) }.first(IMPORTANT_LIMIT)
+      shown = sorted.select { |finding| mismatches.include?(finding) || important.include?(finding) }
+        .first(TOTAL_FINDINGS_LIMIT)
+      [mismatches & shown, important & shown]
+    end
 
     def sorted_findings(findings)
       findings
@@ -167,13 +181,22 @@ module Aireview
       "\n## #{label(:not_reviewed)}\n\n#{lines.join("\n")}\n"
     end
 
+    # Смена ключа остаётся в логах; смена модели видна читателю, потому что
+    # запасная модель может ревьюить слабее основной.
+    def fallback_note(fallback_models)
+      return '' if fallback_models.nil? || fallback_models.empty?
+
+      used = fallback_models.map { |stage, model| "#{stage} — #{model}" }.join(', ')
+      "\n#{label(:fallback_used)}: #{used}.\n"
+    end
+
     def location(finding)
       file = presence(value(finding, 'file'))
       line = value(finding, 'line')
       return label(:not_specified) unless file
-      return file if line.nil? || line.to_s.empty?
 
-      "#{file}:#{line}"
+      location = line.to_s.empty? ? file : "#{file}:#{line}"
+      value(finding, 'quote_missing') ? "#{location} (#{label(:quote_missing)})" : location
     end
 
     def label(key)

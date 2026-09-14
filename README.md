@@ -59,15 +59,19 @@ JIRA_URL=https://jira.company.com
 JIRA_LOGIN=user
 JIRA_PASSWORD=xxx
 GEMINI_API_KEY=xxx
+GEMINI_API_KEYS=xxx,yyy
 LLM_PROVIDER=gemini
 LLM_TEMPERATURE=0
-LLM_TIMEOUT=60
+LLM_TIMEOUT=120
+LLM_TIME_BUDGET=1800
 LLM_HTTP_PROXY=http://127.0.0.1:8888
 LLM_GENERATE_PROVIDER=gemini
 LLM_GENERATE_MODEL=gemini-3.7-flash
+LLM_GENERATE_FALLBACK_MODEL=gemini-3.8-flash
 LLM_GENERATE_TEMPERATURE=0.3
 LLM_CRITIQUE_PROVIDER=gemini
 LLM_CRITIQUE_MODEL=gemini-3.8-flash
+LLM_CRITIQUE_FALLBACK_MODEL=gemini-3.7-flash
 LLM_CRITIQUE_TEMPERATURE=0
 REVIEW_LANGUAGE=ru
 REVIEW_MODE=update
@@ -162,10 +166,14 @@ To run both stages locally, set `ollama` in both provider variables. The
 address with `/v1` matches the
 [Ollama configuration in RubyLLM](https://rubyllm.com/configuration/#provider-configuration).
 `LLM_TIMEOUT` sets the timeout of every LLM request in seconds; for a slow
-local model it can be raised. It does not apply to an "overloaded" (503)
-answer from the provider: such a request gets up to five attempts, the
-original one and four retries with pauses of about 2, 5, 5 and 5 minutes, and
-only the failed stage is repeated, not the whole run.
+local model it can be raised, but not without limit: a hung request holds
+the job for exactly that long while a fallback model sits idle. An
+"overloaded" (503) answer from the provider or a timeout does not fail the
+run right away: without a fallback model such a request gets up to five
+attempts, the original one and four retries with pauses of about 2, 5, 5 and
+5 minutes; with a fallback model, one short retry and a switch (see
+"Fallback models and keys"). Only the failed stage is repeated, not the
+whole run.
 
 Project rules live in `.aireview.yml`. In YAML the `generate.model` and
 `critique.model` settings are required for each stage and are not inherited
@@ -213,13 +221,19 @@ context:
 llm:
   provider: gemini
   temperature: 0
-  timeout: 60
+  timeout: 120
+  time_budget: 1800
   http_proxy: http://127.0.0.1:8888
   max_prompt_chars: 400000
   generate:
     provider: gemini
     model: gemini-3.7-flash
     temperature: 0.3
+    fallbacks:
+      - gemini-3.8-flash
+      - provider: ollama
+        model: qwen2.5-coder:7b
+        max_prompt_chars: 20000
   critique:
     provider: ollama
     model: qwen2.5-coder:7b
@@ -264,6 +278,77 @@ with an error instead of silently reviewing less. Raise the limits or extend
 `ignore_paths`. `--dry-run` prints the sizes of every part and the coverage;
 `--verbose` logs them during a real run.
 
+### Fallback models and keys
+
+The primary model can sit under load (503) for half a day, and a key can run
+out of its daily quota. Neither is cured by waiting, so a stage can have a
+fallback model and a provider can have a fallback key:
+
+- `llm.generate.fallbacks` / `llm.critique.fallbacks` in YAML or
+  `LLM_GENERATE_FALLBACK_MODEL` / `LLM_CRITIQUE_FALLBACK_MODEL` in the
+  environment. One model or several separated by commas, in the order they
+  are tried. The provider goes before a slash (`ollama/qwen2.5-coder:7b`);
+  without it the stage provider is used. A fallback model can have its own
+  `max_prompt_chars`: when the assembled request does not fit, that model is
+  skipped, the context is not cut for it.
+- `GEMINI_API_KEYS=key1,key2`: keys in order of preference; `GEMINI_API_KEY`
+  still works and means a single key. Google counts quotas per Google Cloud
+  project and per model, so a reserve key only makes sense from another
+  project. Use fallback credentials in compliance with the provider's quota
+  and billing terms: Google's
+  [API limitations](https://developers.google.com/terms#api_limitations)
+  forbid circumventing its limits regardless of the project's billing. Keys
+  live only in the environment, never in `.aireview.yml`.
+
+What happens on which error:
+
+| Error | Reaction |
+|---|---|
+| Daily quota (`quotaId` like `…PerDay…` in Google's answer) | No retries: the next key on the same model. The "key + model" pair is remembered until the end of the run so that Critique and the JSON repair do not hit it again. Out of keys: the next model with the first key. |
+| Per-minute limit (429 with a "retry in N s" hint) | Retry after the hinted delay; one retry while there is somewhere to switch to, up to three on the last route. Then the next key, then the next model. |
+| Overloaded (503) or timeout | One short retry (~30 s) and the next model with the same key. The last model in the chain gets the full 2/5/5/5 minute schedule. |
+| Other API errors (schema, context length, auth) | The run fails right away: a fallback model would answer the same. |
+
+All of this is bounded by a time budget for the LLM part of the run:
+`llm.time_budget` / `LLM_TIME_BUDGET`, 1800 seconds by default. A pause that
+does not fit into the remainder is skipped and the request timeout is capped
+by the remainder; when the time is up, the run fails with an error listing
+everything that was tried. Because of this keep `LLM_TIMEOUT` around 120–300
+seconds: one hung request must not eat the whole budget.
+
+The review key (see "A single comment per merge request") is computed from
+the configured primary model, not from the one that answered: a review made
+by a fallback model is not rewritten on the next push without changes in the
+MR, and adding a fallback model to the config does not re-run the review on
+every open MR. When a stage went to a fallback model, the report ends with a
+`Fallback model used: critique — …` line. A key switch stays in the log only,
+and key values never reach the log. `--dry-run` prints the model chains and
+the number of keys per provider, `--no-fallbacks` leaves one model and one
+key per stage.
+
+### Checking that findings point at the diff
+
+Between the passes every candidate is checked against the diff that actually
+went to the model (after `ignore_paths`, secret scrubbing and the budget
+cut). What is checked is the link to the code, not the bug itself:
+
+- `file` is not among the changed files of the MR (renames included): the
+  candidate is dropped before Critique, there is nothing to check it
+  against. A file of the MR that was left out of the context by the budget
+  is a different case, see below.
+- `line` falls into none of the shown hunks: the report shows the finding
+  without a line number.
+- `quoted_code` is not found in the shown diff (compared ignoring
+  whitespace, on the new and on the old side): the candidate stays, but the
+  "Where" line of the report gets `(quote not found in the diff)`. Critique
+  cannot fix the quote, so the mark survives its keep.
+- The file is shown partially, without a diff or not at all: the link cannot
+  be checked, and the coverage block of the report already says so.
+
+Critique receives the result of the check in the candidate's `note` field
+and decides keep/reject with it in mind. With `--no-critique` the check works
+the same way, its marks just go straight to the report.
+
 ## Usage
 
 ```bash
@@ -284,6 +369,7 @@ bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project
 - `--no-jira` turns off the Jira enrichment even when the MR carries an issue key.
 - `--dry-run` prints the LLM settings, the context sizes and coverage, and the Generate prompt, plus the Critique prompt unless `--no-critique` is given.
 - `--no-critique` skips the second pass and renders the Generate candidates directly.
+- `--no-fallbacks` uses only the primary model and the first API key of each stage.
 - `--review-mode MODE` sets the behaviour when a review has already been published: `update` or `once`.
 - `--force` reviews again even when a review for this state of the MR is already published.
 
@@ -372,13 +458,13 @@ aireview:
       - stuck_or_timeout_failure
 ```
 
-`timeout: 45m` is a chosen ceiling, not a guarantee that every retry fits in:
-when the provider is overloaded, one stage can wait up to ~20 minutes of
-pauses plus up to five requests of `LLM_TIMEOUT` each, and there are two
-stages.
+`timeout: 45m` is the job ceiling, not a guarantee: the LLM part of the run
+is itself bounded by `LLM_TIME_BUDGET` (30 minutes by default, pauses and
+fallback models included), the rest is reading the MR and Jira and
+publishing.
 
-Set secrets such as `GITLAB_TOKEN`, `GEMINI_API_KEY` and the optional Jira
-credentials in the GitLab CI/CD variables. If the job should publish the result
+Set secrets such as `GITLAB_TOKEN`, `GEMINI_API_KEY` / `GEMINI_API_KEYS` and
+the optional Jira credentials in the GitLab CI/CD variables. If the job should publish the result
 back to the merge request, add `--post` to the review command.
 
 For runners where the LLM provider is only reachable over WireGuard, bring up a

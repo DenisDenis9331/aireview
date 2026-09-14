@@ -2,14 +2,17 @@
 require 'json'
 require_relative 'errors'
 require_relative 'context_builder'
+require_relative 'candidate_checker'
+require_relative 'result_validation'
 require_relative 'review_renderer'
 require_relative 'review_schemas'
 require_relative 'reviewer'
 
 module Aireview
   class ReviewPipeline
-    class SchemaError < StandardError
-    end
+    include ResultValidation
+
+    SchemaError = ResultValidation::SchemaError
 
     REPAIR_SYSTEM_PROMPT = <<~PROMPT.strip.freeze
       You fix invalid JSON produced by another LLM call.
@@ -47,19 +50,18 @@ module Aireview
       summary = generate_result['summary']
       candidates = Array(generate_result['candidates'])
       @logger.info("Pipeline generate pass completed with #{candidates.size} candidate(s)")
+      candidates = check_candidates(context: context, changes: changes, candidates: candidates)
 
-      accepted = if critique
-                   @logger.info("Pipeline critique pass started (model=#{@config.critique_model})")
-                   critique_candidates(context: context, candidates: candidates)
-                 else
-                   @logger.info('Pipeline critique pass skipped')
-                   candidates
-                 end
+      accepted = critique ? maybe_critique(context: context, candidates: candidates) : skip_critique(candidates)
 
       @logger.info("Pipeline finished with #{accepted.size} accepted finding(s)")
 
-      renderer = ReviewRenderer.new(language: @config.review_language)
-      renderer.render(accepted, summary: summary, coverage: context.coverage)
+      ReviewRenderer.new(language: @config.review_language).render(
+        accepted,
+        summary: summary,
+        coverage: context.coverage,
+        fallback_models: @reviewer.fallback_models
+      )
     end
 
     def dry_run_prompts(merge_request:, changes:, jira_issue: nil, critique: true)
@@ -83,12 +85,41 @@ module Aireview
         generate_temperature: @config.generate_temperature,
         critique_model: @config.critique_model,
         critique_temperature: @config.critique_temperature,
+        generate_fallbacks: @config.fallback_names(:generate),
+        critique_fallbacks: critique ? @config.fallback_names(:critique) : [],
+        api_keys: @config.api_key_counts(critique ? %i[generate critique] : [:generate]),
+        time_budget: @config.llm_time_budget,
         coverage: context.coverage,
         sizes: context.sizes
       }
     end
 
     private
+
+    # Привязка к коду проверяется по диффу, который видела модель, до критика:
+    # ему уходят пометки, в отчёт — сброшенная строка и знак ненайденной цитаты.
+    def check_candidates(context:, changes:, candidates:)
+      CandidateChecker.new(
+        changes: changes,
+        diff_text: context.diff_text,
+        coverage: context.coverage,
+        logger: @logger
+      ).check(candidates)
+    end
+
+    def skip_critique(candidates, reason = nil)
+      @logger.info(['Pipeline critique pass skipped', reason].compact.join(': '))
+      candidates
+    end
+
+    # Критику нечего фильтровать без кандидатов: запрос к LLM был бы пустой
+    # тратой квоты и времени.
+    def maybe_critique(context:, candidates:)
+      return skip_critique(candidates, 'no candidates') if candidates.empty?
+
+      @logger.info("Pipeline critique pass started (model=#{@config.critique_model})")
+      critique_candidates(context: context, candidates: candidates)
+    end
 
     def critique_candidates(context:, candidates:)
       candidates_json = JSON.pretty_generate(candidates)
@@ -209,53 +240,6 @@ module Aireview
       parsed
     end
 
-    def validate_generate_result_shape!(parsed)
-      valid_shape = parsed.is_a?(Hash) && parsed['candidates'].is_a?(Array)
-      raise SchemaError, 'expected an object with summary and candidates array' unless valid_shape
-      raise SchemaError, 'each generate candidate must be an object' unless parsed['candidates'].all?(Hash)
-    end
-
-    def validate_critique_result_shape!(parsed)
-      valid_shape = parsed.is_a?(Hash) && parsed['verdicts'].is_a?(Array)
-      raise SchemaError, 'expected an object with verdicts array' unless valid_shape
-      raise SchemaError, 'each critique verdict must be an object' unless parsed['verdicts'].all?(Hash)
-    end
-
-    def validate_identifiers!(identifiers, missing_message:, duplicate_prefix:)
-      raise SchemaError, missing_message unless identifiers.all?
-
-      duplicate_ids = identifiers.group_by(&:itself).select { |_, ids| ids.size > 1 }.keys
-      return if duplicate_ids.empty?
-
-      raise SchemaError, "#{duplicate_prefix}: #{duplicate_ids.join(', ')}"
-    end
-
-    def validate_expected_verdict_ids!(verdict_ids, expected_ids)
-      return unless expected_ids
-
-      unknown_ids = verdict_ids - expected_ids
-      missing_ids = expected_ids - verdict_ids
-      raise SchemaError, "unknown verdict ids: #{unknown_ids.join(', ')}" unless unknown_ids.empty?
-      raise SchemaError, "missing verdict ids: #{missing_ids.join(', ')}" unless missing_ids.empty?
-    end
-
-    def validate_verdict!(verdict)
-      id = normalize_id(value(verdict, 'id'))
-      decision = normalize_decision(value(verdict, 'decision'))
-      raise SchemaError, "invalid verdict decision for #{id}" unless %w[keep reject].include?(decision)
-
-      refinement = value(verdict, 'refinement')
-      raise SchemaError, "reject verdict cannot include refinement for #{id}" if invalid_refinement?(verdict, decision)
-      return if refinement.nil?
-      return if refinement.is_a?(Hash)
-
-      raise SchemaError, "refinement must be an object for #{id}"
-    end
-
-    def invalid_refinement?(verdict, decision)
-      refinement_key?(verdict) && decision != 'keep'
-    end
-
     def repair_json(raw:, kind:, expected:, stage:, critique_candidate_ids: nil)
       schema = expected == :critique ? ReviewSchemas.critique : ReviewSchemas.generate
       user_prompt = <<~PROMPT
@@ -345,21 +329,14 @@ module Aireview
       hash[key] || hash[key.to_sym]
     end
 
-    def normalize_id(value)
-      presence(value)
-    end
-
     def normalize_decision(value)
       value.to_s.strip.downcase
-    end
-
-    def refinement_key?(verdict)
-      verdict.key?('refinement') || verdict.key?(:refinement)
     end
 
     def presence(value)
       string = value.to_s.strip
       string.empty? ? nil : string
     end
+    alias normalize_id presence
   end
 end

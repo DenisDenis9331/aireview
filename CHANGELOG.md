@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+- Fallback models per stage (`llm.<stage>.fallbacks`,
+  `LLM_<STAGE>_FALLBACK_MODEL`) and fallback API keys (`GEMINI_API_KEYS`).
+  An overloaded model or a timeout switches to the next model after one
+  short retry; an exhausted daily quota switches to the next key without
+  waiting; the last route keeps the full retry schedule.
+- A time budget for the LLM part of the run (`llm.time_budget`,
+  `LLM_TIME_BUDGET`, 30 minutes by default) bounds pauses and request
+  timeouts; the built-in RubyLLM retries are disabled.
+- The report names the fallback model a stage used; `--dry-run` prints the
+  chains and the number of keys; `--no-fallbacks` disables the reserves.
+- Candidates are checked against the diff shown to the model: a file outside
+  the merge request drops the candidate, a line outside the shown hunks is
+  reset, a quote not found in the diff is marked in the report and reported
+  to Critique.
+- Critique is skipped when Generate returns no candidates.
+- Report limits are applied after selecting the findings to show, so a
+  finding that is never shown no longer displaces a useful one.
+
 ## 0.2.1
 
 - An overloaded LLM (503) gets a fifth attempt: the pauses are now about

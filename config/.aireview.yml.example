@@ -27,5 +27,12 @@ review_instructions: |
 
 llm:
   provider: gemini
-  model: gemini-3.7-flash
   temperature: 0.2
+  generate:
+    model: gemini-3.7-flash
+    fallbacks:
+      - gemini-3.8-flash
+  critique:
+    model: gemini-3.8-flash
+    fallbacks:
+      - gemini-3.7-flash

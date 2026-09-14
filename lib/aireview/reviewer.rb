@@ -2,22 +2,17 @@
 require_relative 'errors'
 require_relative 'output_schemas'
 require_relative 'utils'
+require_relative 'llm_router'
 require 'timeout'
 
 module Aireview
   class Reviewer
-    MAX_TRANSIENT_RETRIES = 3
-    TRANSIENT_RETRY_BASE_DELAY = 2.0
-    TRANSIENT_RETRY_JITTER_RANGE = 2.0..5.0
-    PROVIDER_RETRY_DELAY_MULTIPLIER_RANGE = 2.0..2.4
-    OVERLOADED_RETRY_DELAYS = [120.0, 300.0, 300.0, 300.0].freeze
-    OVERLOADED_RETRY_JITTER_RANGE = 0.85..1.15
-    RETRY_WAIT_LOG_FORMAT = 'LLM %<stage>s request will sleep %<delay>.1fs before retry%<source>s ' \
-                            '(attempt %<next_attempt>d/%<max_attempts>d, model=%<model>s)'
+    attr_reader :router
 
-    def initialize(config:, logger: Logger.new($stderr))
+    def initialize(config:, logger: Logger.new($stderr), router: nil)
       @config = config
       @logger = logger
+      @router = router || LlmRouter.new(config: config, logger: logger)
       @llm_contexts = {}
     end
 
@@ -26,12 +21,7 @@ module Aireview
         stage: 'generate',
         system: system_prompt,
         user: user_prompt,
-        options: {
-          model: @config.generate_model,
-          temperature: @config.generate_temperature,
-          provider: @config.generate_provider,
-          schema: GenerateOutputSchema
-        }
+        options: {temperature: @config.generate_temperature, schema: GenerateOutputSchema}
       )
     end
 
@@ -40,13 +30,13 @@ module Aireview
         stage: 'critique',
         system: system_prompt,
         user: user_prompt,
-        options: {
-          model: @config.critique_model,
-          temperature: @config.critique_temperature,
-          provider: @config.critique_provider,
-          schema: CritiqueOutputSchema
-        }
+        options: {temperature: @config.critique_temperature, schema: CritiqueOutputSchema}
       )
+    end
+
+    # Стадии, ответившие запасной моделью, для строки в отчёте.
+    def fallback_models
+      @router.fallback_models
     end
 
     private
@@ -55,26 +45,19 @@ module Aireview
       require 'ruby_llm'
 
       @config.require_llm_configuration!
-      context = llm_context(stage, options[:provider])
-      response = request_with_retries(stage: stage, model: options[:model]) do
+      response = @router.call(stage: stage, request_chars: system.length + user.length) do |route, timeout|
         perform_llm_request(
-          context: context,
+          context: llm_context(stage, route),
           stage: stage,
           system: system,
           user: user,
-          options: options
+          options: options.merge(model: route.candidate.model, provider: route.candidate.provider, timeout: timeout)
         )
       end
       response.content
     rescue LoadError => e
       @logger.error("LLM #{stage} setup failed: #{e.message}")
       raise ConfigError, "Missing dependency: #{e.message}"
-    rescue Timeout::Error
-      @logger.warn(
-        "LLM #{stage} request timed out after #{@config.llm_timeout} seconds (model=#{options[:model]})"
-      )
-      raise ApiError, "LLM request timed out after #{@config.llm_timeout} seconds. " \
-                      "Try again later or switch model via --generate-model/--critique-model."
     end
 
     def perform_llm_request(context:, stage:, system:, user:, options:)
@@ -86,9 +69,12 @@ module Aireview
         .with_temperature(temperature.to_f)
         .with_schema(options[:schema])
       chat.with_instructions(system)
-      response = Timeout.timeout(@config.llm_timeout.to_f) { chat.ask(user) }
+      response = Timeout.timeout(options[:timeout]) { chat.ask(user) }
       @logger.info("LLM #{stage} request completed (model=#{model})")
       response
+    rescue Timeout::Error
+      @logger.warn("LLM #{stage} request timed out after #{options[:timeout].round} seconds (model=#{model})")
+      raise
     end
 
     def configure_reasoning(chat:, model:, provider:)
@@ -108,160 +94,21 @@ module Aireview
       context.chat(model: model, provider: provider.to_sym, assume_model_exists: true)
     end
 
-    def request_with_retries(stage:, model:)
-      attempt = 0
-
-      begin
-        attempt += 1
-        yield
-      rescue StandardError => e
-        raise unless ruby_llm_api_error?(e)
-
-        @logger.warn("LLM #{stage} request failed (model=#{model}): #{e.class}: #{e.message}")
-        raise ApiError, llm_error_message(e) unless retry_llm_request?(e, attempt)
-
-        wait_before_retry(error: e, attempt: attempt, stage: stage, model: model)
-        retry
-      end
+    # Контекст RubyLLM на стадию, провайдера и номер ключа: смена ключа —
+    # это другой контекст, а не правка глобального конфига.
+    def llm_context(stage, route)
+      cache_key = [stage, route.candidate.provider, route.key_index]
+      @llm_contexts[cache_key] ||= build_llm_context(route.candidate.provider.to_s, route.key)
     end
 
-    def retry_llm_request?(error, attempt)
-      transient_llm_error?(error) && attempt <= max_retries(error)
-    end
-
-    # Перегруженному провайдеру даётся на один повтор больше: 503 у Gemini
-    # держится дольше, чем rate limit или сетевой сбой.
-    def max_retries(error)
-      overloaded_llm_error?(error) ? OVERLOADED_RETRY_DELAYS.size : MAX_TRANSIENT_RETRIES
-    end
-
-    def wait_before_retry(error:, attempt:, stage:, model:)
-      retry_delay = transient_retry_delay(error: error, attempt: attempt)
-      @logger.warn(
-        format(
-          RETRY_WAIT_LOG_FORMAT,
-          stage: stage,
-          delay: retry_delay[:delay],
-          source: retry_delay_source(retry_delay),
-          next_attempt: attempt + 1,
-          max_attempts: max_retries(error) + 1,
-          model: model
-        )
-      )
-      sleep_started_at = monotonic_time
-      sleep(retry_delay[:delay])
-      log_retry_wait_completed(stage, model, monotonic_time - sleep_started_at)
-    end
-
-    def log_retry_wait_completed(stage, model, waited)
-      @logger.info(
-        format(
-          'LLM %<stage>s retry wait completed after %<waited>.1fs (model=%<model>s)',
-          stage: stage,
-          waited: waited,
-          model: model
-        )
-      )
-    end
-
-    def ruby_llm_api_error?(error)
-      defined?(RubyLLM::Error) && error.is_a?(RubyLLM::Error)
-    end
-
-    def transient_llm_error?(error)
-      error.is_a?(RubyLLM::RateLimitError) ||
-        error.is_a?(RubyLLM::ServiceUnavailableError) ||
-        error.is_a?(RubyLLM::OverloadedError)
-    end
-
-    def monotonic_time
-      Process.clock_gettime(Process::CLOCK_MONOTONIC)
-    end
-
-    def transient_retry_delay(error:, attempt:)
-      provider_delay = retry_after_seconds(error.message)
-      if provider_delay
-        multiplier = rand(PROVIDER_RETRY_DELAY_MULTIPLIER_RANGE)
-        return {
-          delay: provider_delay * multiplier,
-          provider_delay: provider_delay,
-          multiplier: multiplier,
-          strategy: :provider_hint
-        }
-      end
-
-      if overloaded_llm_error?(error)
-        base_delay = OVERLOADED_RETRY_DELAYS.fetch(attempt - 1, OVERLOADED_RETRY_DELAYS.last)
-        multiplier = rand(OVERLOADED_RETRY_JITTER_RANGE)
-        return {
-          delay: base_delay * multiplier,
-          base_delay: base_delay,
-          multiplier: multiplier,
-          strategy: :overloaded
-        }
-      end
-
-      base_delay = TRANSIENT_RETRY_BASE_DELAY * (2**(attempt - 1))
-      {
-        delay: base_delay + rand(TRANSIENT_RETRY_JITTER_RANGE),
-        provider_delay: nil,
-        multiplier: nil,
-        strategy: :fallback
-      }
-    end
-
-    def retry_delay_source(retry_delay)
-      if retry_delay[:strategy] == :overloaded
-        return format(
-          ' (overloaded backoff %<base_delay>.0fs, multiplier %<multiplier>.2fx)',
-          base_delay: retry_delay[:base_delay],
-          multiplier: retry_delay[:multiplier]
-        )
-      end
-      return '' unless retry_delay[:provider_delay]
-
-      format(
-        ' (provider retry hint %<provider_delay>.1fs, multiplier %<multiplier>.2fx)',
-        provider_delay: retry_delay[:provider_delay],
-        multiplier: retry_delay[:multiplier]
-      )
-    end
-
-    def overloaded_llm_error?(error)
-      error.is_a?(RubyLLM::ServiceUnavailableError) ||
-        error.is_a?(RubyLLM::OverloadedError)
-    end
-
-    def retry_after_seconds(message)
-      match = message.to_s.match(/retry\s+(?:in|after)\s+(\d+(?:\.\d+)?)\s*(?:s|sec|secs|second|seconds)\b/i)
-      match[1].to_f if match
-    end
-
-    def llm_error_message(error)
-      case error
-      when RubyLLM::ServiceUnavailableError, RubyLLM::OverloadedError
-        "LLM service is temporarily unavailable or overloaded: #{error.message}. " \
-        "Try again later or switch model via --generate-model/--critique-model."
-      when RubyLLM::RateLimitError
-        "LLM rate limit exceeded: #{error.message}. " \
-        "Try again later or switch model via --generate-model/--critique-model."
-      when RubyLLM::ContextLengthExceededError
-        "LLM context limit exceeded: #{error.message}. Try reducing the MR diff or ignore more paths."
-      else
-        "LLM API request failed: #{error.message}"
-      end
-    end
-
-    def llm_context(stage, provider)
-      @llm_contexts[stage] ||= build_llm_context(provider.to_s)
-    end
-
-    def build_llm_context(provider)
-      api_key = @config.provider_api_key(provider) unless provider == 'ollama'
-
+    # Повторами занимается роутер: встроенные ретраи RubyLLM/Faraday (по
+    # умолчанию 3) превратили бы каждую нашу попытку в четыре HTTP-запроса и
+    # жгли бы квоту до того, как ошибка дойдёт до классификатора.
+    def build_llm_context(provider, api_key)
       RubyLLM.context do |ruby_config|
         configure_http_proxy(ruby_config)
         ruby_config.request_timeout = @config.llm_timeout.to_f
+        ruby_config.max_retries = 0
         configure_provider(ruby_config, provider, api_key)
       end
     end

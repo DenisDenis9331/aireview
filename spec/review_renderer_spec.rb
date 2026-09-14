@@ -82,6 +82,52 @@ RSpec.describe Aireview::ReviewRenderer do
     expect(result).to include("## Не вошло в ревью\n\n- app/a.rb")
   end
 
+  it 'names the stages that answered with a fallback model' do
+    result = described_class.new.render([], summary: 'x', fallback_models: {'critique' => 'gemini/gemini-3.7-flash'})
+
+    expect(result).to include("ok\n\nFallback model used: critique — gemini/gemini-3.7-flash.\n\nThis report was generated")
+    expect(described_class.new.render([], summary: 'x', fallback_models: {})).not_to include('Fallback model')
+    expect(described_class.new(language: 'ru').render([], summary: 'x', fallback_models: {'critique' => 'm'}))
+      .to include('Использована резервная модель: critique — m.')
+  end
+
+  it 'does not let a finding that is never shown displace a useful one' do
+    hidden = 3.times.map do |index|
+      finding.merge('id' => "C#{index + 1}", 'category' => 'maintainability', 'severity' => 'critical',
+                    'problem' => "Style #{index + 1}")
+    end
+    useful = finding.merge('id' => 'C4', 'category' => 'bug', 'severity' => 'major', 'problem' => 'Tax is lost')
+
+    result = described_class.new.render(hidden + [useful], summary: 'x')
+
+    expect(result).to include('- **Problem**: Tax is lost')
+    expect(result).not_to include('Style 1')
+    expect(result).to include('needs attention')
+  end
+
+  it 'does not let a third mismatch over the section limit displace an important finding' do
+    mismatches = 3.times.map do |index|
+      finding.merge('id' => "C#{index + 1}", 'category' => 'task_mismatch', 'severity' => 'critical',
+                    'problem' => "Debug leftover #{index + 1}")
+    end
+    bug = finding.merge('id' => 'C4', 'category' => 'bug', 'severity' => 'major', 'problem' => 'Tax is lost')
+
+    result = described_class.new.render(mismatches + [bug], summary: 'x')
+
+    expect(result).to include('Debug leftover 1', 'Debug leftover 2', 'Tax is lost')
+    expect(result).not_to include('Debug leftover 3')
+  end
+
+  it 'marks a location whose quote was not found, with or without a line' do
+    with_line = described_class.new.render([finding.merge('quote_missing' => true)], summary: 'x')
+    without_line = described_class.new.render([finding.merge('line' => nil, 'quote_missing' => true)], summary: 'x')
+
+    expect(with_line).to include('- **Where**: app/models/order.rb:12 (quote not found in the diff)')
+    expect(without_line).to include('- **Where**: app/models/order.rb (quote not found in the diff)')
+    expect(described_class.new(language: 'ru').render([finding.merge('quote_missing' => true)], summary: 'x'))
+      .to include('- **Где**: app/models/order.rb:12 (цитата не найдена в диффе)')
+  end
+
   it 'renders nothing about coverage when it is complete' do
     complete = described_class.new.render([], summary: 'x', coverage: Aireview::ContextBudget::Coverage.empty)
 

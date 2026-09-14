@@ -68,7 +68,8 @@ module Aireview
         generate_model: options[:generate_model],
         critique_model: options[:critique_model],
         generate_temperature: options[:generate_temperature],
-        critique_temperature: options[:critique_temperature]
+        critique_temperature: options[:critique_temperature],
+        no_fallbacks: options[:no_fallbacks] == true
       )
       config.require_llm_configuration!
       config
@@ -280,6 +281,10 @@ module Aireview
       parser.on('--no-critique', 'Skip critique pass and render Generate candidates directly') do
         options[:no_critique] = true
       end
+
+      parser.on('--no-fallbacks', 'Use only the primary model and the first API key of each stage') do
+        options[:no_fallbacks] = true
+      end
     end
 
     def add_publication_options(parser, options)
@@ -349,6 +354,7 @@ module Aireview
           --no-jira        Disable Jira enrichment
           --dry-run        Print prompts without LLM calls
           --no-critique    Skip second LLM critique pass
+          --no-fallbacks   Use only the primary model and the first API key of each stage
           --verbose        Enable verbose logging
           -h, --help       Show help
       HELP

@@ -5,11 +5,14 @@ require 'yaml'
 require_relative 'errors'
 require_relative 'utils'
 require_relative 'config_limits'
+require_relative 'config_fallbacks'
 
 module Aireview
   class Config
     include ConfigLimits
+    include ConfigFallbacks
     extend ConfigLimits::ClassMethods
+    extend ConfigFallbacks::ClassMethods
 
     DEFAULT_SECRET_FILES = [
       '.env',
@@ -39,7 +42,8 @@ module Aireview
         'provider' => 'gemini',
         'temperature' => 0,
         'timeout' => 60,
-        'max_prompt_chars' => ConfigLimits::DEFAULT_MAX_PROMPT_CHARS
+        'max_prompt_chars' => ConfigLimits::DEFAULT_MAX_PROMPT_CHARS,
+        'time_budget' => ConfigFallbacks::DEFAULT_TIME_BUDGET
       },
       'context' => ConfigLimits::CONTEXT_DEFAULTS
     }.freeze
@@ -104,6 +108,7 @@ module Aireview
         .merge('llm' => llm_env_config(env))
         .merge(context_env_config(env))
         .merge(provider_key_env_config(env))
+        .merge(provider_keys_env_config(env))
         .merge(generic_api_key_env_config(env))
     end
 
@@ -120,6 +125,7 @@ module Aireview
         'temperature' => parse_float(env['LLM_TEMPERATURE']),
         'timeout' => parse_float(env['LLM_TIMEOUT']),
         'max_prompt_chars' => parse_integer(env['LLM_MAX_PROMPT_CHARS'], 'LLM_MAX_PROMPT_CHARS'),
+        'time_budget' => parse_integer(env['LLM_TIME_BUDGET'], 'LLM_TIME_BUDGET'),
         'generate' => llm_stage_env_config(env, 'GENERATE'),
         'critique' => llm_stage_env_config(env, 'CRITIQUE')
       }.compact.reject { |key, value| %w[generate critique].include?(key) && value.empty? }
@@ -130,7 +136,8 @@ module Aireview
         'provider' => env["LLM_#{stage}_PROVIDER"],
         'model' => env["LLM_#{stage}_MODEL"],
         'temperature' => parse_float(env["LLM_#{stage}_TEMPERATURE"]),
-        'max_prompt_chars' => parse_integer(env["LLM_#{stage}_MAX_PROMPT_CHARS"], "LLM_#{stage}_MAX_PROMPT_CHARS")
+        'max_prompt_chars' => parse_integer(env["LLM_#{stage}_MAX_PROMPT_CHARS"], "LLM_#{stage}_MAX_PROMPT_CHARS"),
+        'fallbacks' => fallback_models_env_config(env, stage)
       }.compact
     end
 
@@ -187,23 +194,25 @@ module Aireview
       @logger = logger
     end
 
+    # Переопределения из CLI меняют только основную модель стадии, запасные
+    # из конфига остаются; no_fallbacks оставляет одну модель и один ключ.
     def with_overrides(
       generate_model: nil,
       critique_model: nil,
       generate_temperature: nil,
-      critique_temperature: nil
+      critique_temperature: nil,
+      no_fallbacks: false
     )
       llm_config = {
         'generate' => stage_overrides(model: generate_model, temperature: generate_temperature),
         'critique' => stage_overrides(model: critique_model, temperature: critique_temperature)
       }.reject { |_, overrides| overrides.empty? }
-      return self if llm_config.empty?
+      overrides = {}
+      overrides['llm'] = llm_config unless llm_config.empty?
+      overrides['fallbacks_disabled'] = true if no_fallbacks
+      return self if overrides.empty?
 
-      merged = self.class.deep_merge(
-        @data,
-        'llm' => llm_config
-      )
-      self.class.new(merged, config_path: config_path, logger: @logger)
+      self.class.new(self.class.deep_merge(@data, overrides), config_path: config_path, logger: @logger)
     end
 
     def gitlab_url
@@ -334,19 +343,20 @@ module Aireview
     def require_llm_configuration!
       require_models!
 
-      missing_keys = {
-        'generate' => generate_provider,
-        'critique' => critique_provider
-      }.filter_map do |stage, provider|
-        next if provider.to_s == 'ollama'
-        next if Aireview::Utils.present?(provider_api_key(provider))
-
-        "#{stage}: API key is required for provider #{provider.inspect}"
+      missing_keys = ConfigLimits::LLM_STAGES.flat_map do |stage|
+        providers = stage_chain(stage).map(&:provider).uniq.reject { |provider| provider_keys_present?(provider) }
+        providers.map { |provider| "#{stage}: API key is required for provider #{provider.inspect}" }
       end
       raise ConfigError, missing_keys.join(', ') unless missing_keys.empty?
     end
 
     private
+
+    def provider_keys_present?(provider)
+      return true if ConfigFallbacks::KEYLESS_PROVIDERS.include?(provider.to_s)
+
+      provider_api_keys(provider).any? { |key| Aireview::Utils.present?(key) }
+    end
 
     def stage_overrides(model:, temperature:)
       {

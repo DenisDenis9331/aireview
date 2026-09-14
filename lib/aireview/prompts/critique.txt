@@ -48,6 +48,13 @@ and reject the rest as duplicates.
 
 Do not add new findings. Do not change id.
 Do not change file, line, quoted_code. They do not need to be reinvented.
+
+A candidate may carry a note field: the result of a mechanical check of its
+link to the diff (the quote was not found in the shown diff, the line was
+reset to null, the file was shown partially). It means the link could not be
+confirmed, not that the finding is made up; take the note into account when
+deciding keep/reject and check such a candidate against the diff more
+carefully.
 Use refinement only when it makes a keep finding more precise.
 
 The answer must be a valid JSON object only, without markdown and without any
