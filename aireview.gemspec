@@ -30,7 +30,7 @@ Gem::Specification.new do |spec|
   spec.required_ruby_version = '>= 3.1.3'
 
   spec.add_dependency 'dotenv', '~> 3.1'
-  spec.add_dependency 'faraday', '~> 2.14'
+  spec.add_dependency 'faraday', '~> 2.14', '>= 2.14.4'
   spec.add_dependency 'ruby_llm', '1.16.0'
 
   spec.metadata['homepage_uri'] = spec.homepage
