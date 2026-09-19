@@ -2,11 +2,14 @@
 # schemas against qwen2.5-coder:1.5b, plus the missing-model status. Checks
 # the integration (RubyLLM's Ollama provider, our client, schemas, checker
 # statuses), not review quality — a 1.5b model proves nothing about that.
-# Manual runs first; a schedule is added once the timing is known.
+# Measured on a public runner (4 CPU): the model pulls in ~10 s, both probes
+# take ~25 s, the whole job under three minutes — hence a daily schedule.
 name: Ollama check
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '17 5 * * *'
 
 permissions:
   contents: read
