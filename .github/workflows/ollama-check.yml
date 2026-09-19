@@ -2,10 +2,14 @@
 # schemas against qwen2.5-coder:1.5b, plus the missing-model status. Checks
 # the integration (RubyLLM's Ollama provider, our client, schemas, checker
 # statuses), not review quality — a 1.5b model proves nothing about that.
-# Manual runs first; a schedule is added once the timing is known.
+# Measured on a public runner (4 CPU): the model pulls in ~10 s, both probes
+# take ~25 s, the whole job under two minutes — cheap enough to run on every
+# push like the rest of CI.
 name: Ollama check
 
 on:
+  push:
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -34,7 +38,9 @@ jobs:
         run: docker exec ${{ job.services.ollama.id }} ollama pull qwen2.5-coder:1.5b
       - name: Both schemas on the model, unreachable Ollama is a failure
         run: bundle exec bin/aireview models check --strict --verbose
-      - name: A model Ollama does not have is reported as missing, not as a crash
+      # The check itself prints "FAILED" here on purpose: the step passes
+      # when the missing model is reported as `missing` with exit code 1.
+      - name: Missing model is reported as missing with exit 1 (FAILED below is expected)
         env:
           LLM_MODELS: ollama/nope:1b
         run: |
