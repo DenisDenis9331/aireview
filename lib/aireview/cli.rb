@@ -1,8 +1,9 @@
 # frozen_string_literal: true
 require 'securerandom'
+require_relative 'model_checker'
 
 module Aireview
-  class CLI
+  class CLI # rubocop:disable Metrics/ClassLength
     def self.start(argv, out: $stdout, err: $stderr, env: ENV)
       new(argv, out: out, err: err, env: env).start
     end
@@ -24,6 +25,8 @@ module Aireview
       case command
       when 'review'
         run_review(@argv)
+      when 'models'
+        run_models(@argv)
       when '--help', '-h', nil
         @out.puts(help)
         0
@@ -40,6 +43,33 @@ module Aireview
     end
 
     private
+
+    # aireview models check [--config PATH] [--verbose]: каждой модели из
+    # цепочек — по запросу с боевыми схемами; см. ModelChecker.
+    def run_models(argv)
+      options = parse_models_options(argv)
+      raise ParseError, "Usage: aireview models check [options] (got: #{argv.join(' ')})" unless argv == ['check']
+
+      @logger.level = Logger::DEBUG if options[:verbose]
+      config = Config.load(config_path: options[:config], cwd: Dir.pwd, env: @env, logger: @logger)
+      config.warnings.each { |warning| @logger.warn(warning) }
+      ModelChecker.new(config: config, out: @out, logger: @logger, strict: options[:strict] == true).run
+    end
+
+    def parse_models_options(argv)
+      options = {}
+      OptionParser.new do |parser|
+        parser.banner = 'Usage: aireview models check [options]'
+        parser.on('--config PATH', 'Path to .aireview.yml') { |value| options[:config] = value }
+        parser.on('--strict', 'Treat a skipped model (unreachable Ollama) as a failure') { options[:strict] = true }
+        parser.on('--verbose', 'Enable debug logging') { options[:verbose] = true }
+        parser.on('-h', '--help', 'Show help') do
+          @out.puts(parser)
+          raise Aireview::HelpRequested
+        end
+      end.parse!(argv)
+      options
+    end
 
     def run_review(argv)
       options, mr_url = review_options_and_url(argv)
@@ -72,6 +102,7 @@ module Aireview
         no_fallbacks: options[:no_fallbacks] == true
       )
       config.require_llm_configuration!
+      config.warnings.each { |warning| @logger.warn(warning) }
       config
     end
 
@@ -333,9 +364,12 @@ module Aireview
       <<~HELP
         Usage:
           aireview review <merge_request_url> [options]
+          aireview models check [--config PATH] [--strict] [--verbose]
 
         Commands:
-          review    Run review for a GitLab merge request URL
+          review        Run review for a GitLab merge request URL
+          models check  Send a probe request with the generate and critique schemas
+                        to every model of both stages; exit 1 if any fails
 
         Options:
           --post           Post review as a merge request note

@@ -46,6 +46,7 @@ module Aireview
         diff_unavailable: 'diff not available',
         section_list: 'Truncated sections',
         fallback_used: 'Fallback model used',
+        critique_weaker: 'Critique ran on a model weaker than Generate: the findings were checked less strictly.',
         quote_missing: 'quote not found in the diff'
       },
       'ru' => {
@@ -72,6 +73,7 @@ module Aireview
         diff_unavailable: 'дифф недоступен',
         section_list: 'Усечённые секции',
         fallback_used: 'Использована резервная модель',
+        critique_weaker: 'Критика выполнена моделью слабее generate: замечания проверены менее строго.',
         quote_missing: 'цитата не найдена в диффе'
       }
     }.freeze
@@ -84,7 +86,7 @@ module Aireview
     # result по-прежнему про найденные проблемы; неполнота покрытия
     # дописывается рядом с ним, чтобы строка результата не читалась как
     # «проверено всё».
-    def render(accepted, summary:, coverage: nil, fallback_models: {})
+    def render(accepted, summary:, coverage: nil, fallback_models: {}, critique_weaker: false)
       mismatches, important = select_findings(Array(accepted))
       result = mismatches.empty? && important.empty? ? 'ok' : 'needs attention'
 
@@ -104,7 +106,7 @@ module Aireview
         ## #{label(:result)}
 
         #{result}#{partial_note(coverage)}
-        #{coverage_block(coverage)}#{fallback_note(fallback_models)}
+        #{coverage_block(coverage)}#{fallback_note(fallback_models)}#{weaker_note(critique_weaker)}
         #{label(:disclaimer)}
       MARKDOWN
     end
@@ -183,6 +185,12 @@ module Aireview
 
     # Смена ключа остаётся в логах; смена модели видна читателю, потому что
     # запасная модель может ревьюить слабее основной.
+    def weaker_note(critique_weaker)
+      return '' unless critique_weaker
+
+      "\n#{label(:critique_weaker)}\n"
+    end
+
     def fallback_note(fallback_models)
       return '' if fallback_models.nil? || fallback_models.empty?
 

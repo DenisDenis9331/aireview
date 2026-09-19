@@ -91,6 +91,14 @@ RSpec.describe Aireview::ReviewRenderer do
       .to include('Использована резервная модель: critique — m.')
   end
 
+  it 'notes a critique that ran on a model weaker than generate, in the report language' do
+    text = described_class.new.render([], summary: 'x', critique_weaker: true)
+    expect(text).to include('Critique ran on a model weaker than Generate')
+    expect(described_class.new.render([], summary: 'x')).not_to include('weaker than Generate')
+    expect(described_class.new(language: 'ru').render([], summary: 'x', critique_weaker: true))
+      .to include('Критика выполнена моделью слабее generate')
+  end
+
   it 'does not let a finding that is never shown displace a useful one' do
     hidden = 3.times.map do |index|
       finding.merge('id' => "C#{index + 1}", 'category' => 'maintainability', 'severity' => 'critical',

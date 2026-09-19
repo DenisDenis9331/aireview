@@ -21,18 +21,16 @@ module Aireview
 
     # Ключ считается от готовых промптов, а не от одного SHA: так в него сами
     # собой попадают дифф, описание MR, контекст Jira, инструкции ревью и
-    # ignore_paths. Модели и провайдеры добавляются рядом — на промпт они не
-    # влияют, но на результат влияют.
+    # ignore_paths. Что кроме промпта влияет на результат — провайдер,
+    # модель, температура стадий, общий пул с политикой критики — знает
+    # Config#result_signature. Без пула ключ тот же, что раньше.
     def key(prompts:, config:)
+      signature = config.result_signature
       source = {
-        'generate' => [
-          config.generate_provider,
-          prompts[:generate_model],
-          prompts[:generate_temperature],
-          prompts[:generate_prompt]
-        ],
-        'critique' => critique_source(prompts, config)
+        'generate' => [*signature['generate'], prompts[:generate_prompt]],
+        'critique' => prompts[:critique_prompt] ? [*signature['critique'], prompts[:critique_prompt]] : nil
       }
+      source['pool'] = signature['pool'] if signature['pool']
 
       Digest::SHA256.hexdigest(JSON.generate(source))[0, 16]
     end
@@ -49,17 +47,6 @@ module Aireview
         'title' => merge_request['title'],
         'description' => merge_request['description']
       }
-    end
-
-    def critique_source(prompts, config)
-      return nil unless prompts[:critique_prompt]
-
-      [
-        config.critique_provider,
-        prompts[:critique_model],
-        prompts[:critique_temperature],
-        prompts[:critique_prompt]
-      ]
     end
   end
 end

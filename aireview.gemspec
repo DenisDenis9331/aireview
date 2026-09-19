@@ -16,6 +16,7 @@ Gem::Specification.new do |spec|
     Dir[
       'bin/*',
       'config/.aireview.yml.example',
+      'config/defaults.yml',
       'lib/**/*.{rb,txt}',
       'CHANGELOG.md',
       'CONTRIBUTORS.md',

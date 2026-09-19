@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 require_relative 'utils'
 require_relative 'errors'
+require_relative 'stages'
 require_relative 'secret_scrubber'
 require_relative 'diff_fetcher'
 require_relative 'context_budget'
@@ -19,7 +20,6 @@ module Aireview
     # символов. Оценка, не гарантия; фактический размер проверяется перед
     # отправкой.
     CANDIDATES_RESERVE_CHARS = 4_500
-    STAGES = %i[generate critique].freeze
 
     # Контекст одного прогона: обе стадии получают одинаковые MR, Jira и дифф,
     # усечённые один раз под самую тесную из стадий.
@@ -53,16 +53,16 @@ module Aireview
     end
 
     def build_generate_prompt(context)
-      check_stage_size!(:generate, system_prompt(:generate), context.user_prompt)
+      check_stage_size!('generate', system_prompt('generate'), context.user_prompt)
     end
 
     def build_critique_prompt(context, candidates_json:)
       user = "#{context.user_prompt}#{CANDIDATES_HEADER}#{scrub_text(candidates_json)}"
-      check_stage_size!(:critique, system_prompt(:critique), user)
+      check_stage_size!('critique', system_prompt('critique'), user)
     end
 
     def system_prompt(stage)
-      template = stage.to_sym == :critique ? CRITIQUE_PROMPT_TEMPLATE : GENERATE_PROMPT_TEMPLATE
+      template = stage.to_s == 'critique' ? CRITIQUE_PROMPT_TEMPLATE : GENERATE_PROMPT_TEMPLATE
       extras = []
       if Aireview::Utils.present?(@config.review_instructions)
         extras << "Additional project instructions:\n#{scrub_text(@config.review_instructions.strip)}"
@@ -76,6 +76,7 @@ module Aireview
     # помещается, это ошибка, а не повод молча резать контекст, который
     # генератор уже видел.
     def check_stage_size!(stage, system, user)
+      stage = stage.to_s
       limit = @config.max_prompt_chars(stage)
       total = system.length + user.length
       if total > limit
@@ -92,7 +93,7 @@ module Aireview
     # Минимум по стадиям: контекст один на прогон, поэтому он должен
     # помещаться в каждую из них вместе с её системным промптом и резервом.
     def context_budget(critique:)
-      stages = critique ? STAGES : [:generate]
+      stages = critique ? STAGES : ['generate']
       budgets = stages.to_h { |stage| [stage, stage_budget(stage)] }
       stage, budget = budgets.min_by { |_, value| value }
       return budget if budget.positive?
@@ -104,7 +105,7 @@ module Aireview
     end
 
     def stage_budget(stage)
-      reserve = stage == :critique ? CANDIDATES_RESERVE_CHARS + CANDIDATES_HEADER.length : 0
+      reserve = stage == 'critique' ? CANDIDATES_RESERVE_CHARS + CANDIDATES_HEADER.length : 0
       @config.max_prompt_chars(stage) - system_prompt(stage).length - reserve
     end
 
@@ -152,7 +153,7 @@ module Aireview
     end
 
     def context_sizes(fixed:, packed:, budget:, diff_budget:, critique:)
-      stages = critique ? STAGES : [:generate]
+      stages = critique ? STAGES : ['generate']
       {
         context_budget: budget,
         diff_budget: diff_budget,

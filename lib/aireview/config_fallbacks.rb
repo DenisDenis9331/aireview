@@ -1,61 +1,30 @@
 # frozen_string_literal: true
+require_relative 'stages'
+require_relative 'errors'
+require_relative 'utils'
+require_relative 'model_candidate'
+require_relative 'stage_chains'
+require_relative 'model_pool'
 
 module Aireview
   # Резервы на случай, когда основная модель лежит или у ключа кончилась
-  # квота: цепочка моделей на стадию и список ключей на провайдера. Модели
-  # задаются в .aireview.yml или env, ключи — только в env.
+  # квота: план маршрутизации (см. StageChains и ModelPool) и список ключей
+  # на провайдера. Модели задаются в .aireview.yml или env, ключи — только
+  # в env.
   module ConfigFallbacks
-    ModelCandidate = Struct.new(:provider, :model, :max_prompt_chars, keyword_init: true) do
-      def to_s
-        "#{provider}/#{model}"
-      end
-    end
-
-    KNOWN_PROVIDERS = %w[gemini ollama].freeze
     KEYLESS_PROVIDERS = %w[ollama].freeze
-    PROVIDER_KEYS_MAPPING = {
-      'gemini' => 'GEMINI_API_KEYS'
-    }.freeze
     DEFAULT_TIME_BUDGET = 1_800
+    DEFAULT_OVERLOADED_QUARANTINE = 120
 
-    module ClassMethods
-      # LLM_GENERATE_FALLBACK_MODEL=gemini-3.8-flash (или список через запятую) —
-      # провайдер отделён слэшем, потому что теги Ollama содержат двоеточие.
-      def fallback_models_env_config(env, stage)
-        value = env["LLM_#{stage}_FALLBACK_MODEL"]
-        return nil if Aireview::Utils.blank?(value)
-
-        value.split(',').map(&:strip).reject(&:empty?).map { |item| parse_fallback_item(item) }
-      end
-
-      def parse_fallback_item(item)
-        provider, model = item.split('/', 2)
-        return {'provider' => provider, 'model' => model} if model && KNOWN_PROVIDERS.include?(provider)
-
-        {'model' => item}
-      end
-
-      def provider_keys_env_config(env)
-        PROVIDER_KEYS_MAPPING.each_with_object({}) do |(provider, env_key), config|
-          keys = env[env_key].to_s.split(',').map(&:strip).reject(&:empty?)
-          config["#{provider}_api_keys"] = keys unless keys.empty?
-        end
-      end
+    # План маршрутизации строится один раз: общий пул, если задан llm.models,
+    # иначе независимые цепочки стадий. Стадия со своей model внутри пула —
+    # независимая цепочка.
+    def routing
+      @routing ||= build_routing
     end
 
-    # Первый элемент — основная модель стадии, дальше запасные в порядке
-    # обхода. Запасная без провайдера наследует провайдера стадии, без
-    # max_prompt_chars — лимит стадии.
     def stage_chain(stage)
-      stage = stage.to_s
-      primary = ModelCandidate.new(
-        provider: public_send("#{stage}_provider"),
-        model: public_send("#{stage}_model"),
-        max_prompt_chars: max_prompt_chars(stage)
-      )
-      return [primary] if fallbacks_disabled?
-
-      [primary, *fallback_candidates(stage, primary)]
+      routing.chain(stage)
     end
 
     # Ключи в порядке предпочтения; для провайдера без ключей — один nil,
@@ -91,22 +60,64 @@ module Aireview
       positive_integer!(dig('llm', 'time_budget') || DEFAULT_TIME_BUDGET, 'llm.time_budget')
     end
 
+    # Сколько секунд перегруженная или зависшая модель пропускается, прежде
+    # чем роутер попробует её снова.
+    def overloaded_quarantine
+      positive_integer!(dig('llm', 'overloaded_quarantine') || DEFAULT_OVERLOADED_QUARANTINE,
+                        'llm.overloaded_quarantine')
+    end
+
+    def require_models!
+      missing = []
+      missing << 'llm.generate.model (or LLM_GENERATE_MODEL)' if Aireview::Utils.blank?(generate_model)
+      missing << 'llm.critique.model (or LLM_CRITIQUE_MODEL)' if Aireview::Utils.blank?(critique_model)
+      raise ConfigError, "LLM models are required: #{missing.join(', ')}" unless missing.empty?
+    end
+
+    # План строится целиком (с проверкой пула и политики критики) до первого
+    # запроса, а не в критике после оплаченного generate.
+    def require_llm_configuration!
+      require_models!
+      routing
+
+      missing_keys = STAGES.flat_map do |stage|
+        providers = stage_chain(stage).map(&:provider).uniq.reject { |provider| provider_keys_present?(provider) }
+        providers.map { |provider| "#{stage}: API key is required for provider #{provider.inspect}" }
+      end
+      raise ConfigError, missing_keys.join(', ') unless missing_keys.empty?
+    end
+
     private
 
-    def fallback_candidates(stage, primary)
-      Array(dig('llm', stage, 'fallbacks')).each_with_index.map do |item, index|
-        item = {'model' => item} if item.is_a?(String)
-        name = "llm.#{stage}.fallbacks[#{index}]"
-        raise ConfigError, "#{name} must be a model name or a hash with model" unless item.is_a?(Hash)
-        raise ConfigError, "#{name}.model is required" if Aireview::Utils.blank?(item['model'])
+    def build_routing
+      settings = STAGES.to_h { |stage| [stage, stage_settings(stage)] }
+      models = Array(dig('llm', 'models'))
+      return StageChains.build(settings, only_primary: fallbacks_disabled?) if models.empty?
 
-        limit = item['max_prompt_chars']
-        ModelCandidate.new(
-          provider: (item['provider'] || primary.provider).to_s,
-          model: item['model'].to_s,
-          max_prompt_chars: limit.nil? ? primary.max_prompt_chars : positive_integer!(limit, "#{name}.max_prompt_chars")
-        )
-      end
+      own = settings.select { |_, stage_settings| Aireview::Utils.present?(stage_settings[:model]) }
+      ModelPool.new(
+        items: models, provider: llm_provider,
+        limits: STAGES.to_h { |stage| [stage, max_prompt_chars(stage)] },
+        starts: STAGES.to_h { |stage| [stage, dig('llm', stage, 'start')] },
+        inherited_starts: STAGES.select { |stage| start_inherited?(stage) },
+        rank: dig('llm', 'critique', 'rank'), allow_weaker: dig('llm', 'critique', 'allow_weaker'),
+        own_chains: StageChains.build(own, only_primary: fallbacks_disabled?), only_primary: fallbacks_disabled?
+      )
+    end
+
+    def stage_settings(stage)
+      {
+        provider: stage_setting(stage, 'provider') || llm_provider,
+        model: dig('llm', stage, 'model'),
+        fallbacks: dig('llm', stage, 'fallbacks'),
+        max_prompt_chars: max_prompt_chars(stage)
+      }
+    end
+
+    def provider_keys_present?(provider)
+      return true if ConfigFallbacks::KEYLESS_PROVIDERS.include?(provider.to_s)
+
+      provider_api_keys(provider).any? { |key| Aireview::Utils.present?(key) }
     end
   end
 end

@@ -21,12 +21,22 @@ RSpec.describe Aireview::ReviewPipeline do
       critique_model: 'gemini-critique',
       critique_temperature: 0,
       llm_time_budget: 1_800,
+      overloaded_quarantine: 120,
+      routing: instance_double('Aireview::StageChains', rule: nil, signature: nil),
+      warnings: [],
       fallback_names: [],
+      stage_model_source: nil,
+      stage_fallbacks_source: nil,
+      stage_provider_source: 'built-in',
+      layer_paths: {},
       api_key_counts: {'gemini' => 1}
     )
   end
 
-  let(:reviewer) { instance_double('Aireview::Reviewer', fallback_models: {}) }
+  let(:reviewer) do
+    instance_double('Aireview::Reviewer', fallback_models: {}, answered_model: nil, exclude_answered_model: nil,
+                                          critique_weaker?: false)
+  end
   let(:logger) { Logger.new(nil) }
   let(:pipeline) { described_class.new(config: config, reviewer: reviewer, logger: logger) }
 
@@ -239,12 +249,98 @@ RSpec.describe Aireview::ReviewPipeline do
     expect(result).to include('Tax is no longer included')
   end
 
-  it 'raises a clear error when generate JSON repair fails' do
+  it 'raises a clear error when generate JSON repair fails and no other model is left' do
     allow(reviewer).to receive(:generate).and_return('not json', 'still not json')
 
     expect do
       pipeline.run(merge_request: merge_request, changes: changes, critique: false)
     end.to raise_error(Aireview::ParseError, /invalid generate result JSON after repair/)
+    expect(reviewer).to have_received(:generate).with(hash_including(pinned: true)).once
+    expect(reviewer).to have_received(:exclude_answered_model)
+      .with(stage: 'generate', reason: /invalid result: LLM returned invalid generate result JSON after repair/)
+  end
+
+  it 'restarts the stage on the next model with the original prompt after a failed repair' do
+    log_output = StringIO.new
+    pipeline = described_class.new(config: config, reviewer: reviewer, logger: Logger.new(log_output))
+    prompts = []
+    responses = ['not json', 'still not json', generate_result([candidates.first])]
+    allow(reviewer).to receive(:generate) do |**kwargs|
+      prompts << kwargs
+      responses.shift
+    end
+    allow(reviewer).to receive(:exclude_answered_model).and_return('gemini/gemini-3.7-flash')
+    allow(reviewer).to receive(:answered_model).and_return('gemini/gemini-3.6-flash (2/2)')
+
+    result = pipeline.run(merge_request: merge_request, changes: changes, critique: false)
+
+    expect(result).to include('Tax is no longer included')
+    expect(prompts.map { |kwargs| kwargs[:pinned] }).to eq([nil, true, nil])
+    expect(prompts.first[:user_prompt]).to eq(prompts.last[:user_prompt])
+    expect(log_output.string).to include(
+      'Pipeline generate: restarting on the next model after gemini/gemini-3.7-flash'
+    )
+    expect(log_output.string).to include('completed with 1 candidate(s) (model=gemini/gemini-3.6-flash (2/2))')
+  end
+
+  it 'restarts the stage when the answering model has no attempts left for the repair' do
+    allow(reviewer).to receive(:generate).with(hash_including(pinned: true))
+      .and_raise(Aireview::RepairImpossibleError, 'attempt limit of 3 reached')
+    allow(reviewer).to receive(:generate).with(hash_excluding(pinned: true))
+      .and_return('not json', generate_result([candidates.first]))
+    allow(reviewer).to receive(:exclude_answered_model).and_return('gemini/gemini-3.7-flash')
+
+    result = pipeline.run(merge_request: merge_request, changes: changes, critique: false)
+
+    expect(result).to include('Tax is no longer included')
+    expect(reviewer).to have_received(:exclude_answered_model)
+      .with(stage: 'generate', reason: 'repair impossible: attempt limit of 3 reached')
+  end
+
+  it 'treats a repair request over the stage limit as an invalid result and restarts on the next model' do
+    allow(config).to receive(:max_prompt_chars).with('generate').and_return(5_000)
+    allow(reviewer).to receive(:generate).and_return('not json ' * 1_000, generate_result([candidates.first]))
+    allow(reviewer).to receive(:exclude_answered_model).and_return('gemini/gemini-3.7-flash')
+
+    result = pipeline.run(merge_request: merge_request, changes: changes, critique: false)
+
+    expect(result).to include('Tax is no longer included')
+    expect(reviewer).to have_received(:generate).twice
+    expect(reviewer).not_to have_received(:generate).with(hash_including(pinned: true))
+    expect(reviewer).to have_received(:exclude_answered_model)
+      .with(stage: 'generate', reason: /invalid result: repair request does not fit the stage limit: Generate request is \d+ chars/)
+  end
+
+  it 'passes the weaker-critique flag and the critique rule through to the report and dry-run' do
+    allow(reviewer).to receive(:generate).and_return(generate_result([candidates.first]))
+    allow(reviewer).to receive(:critique).and_return(
+      JSON.generate(verdicts: [{ id: 'C1', decision: 'keep', reason: 'confirmed by diff' }])
+    )
+    allow(reviewer).to receive(:critique_weaker?).and_return(true)
+    allow(config).to receive(:routing).and_return(instance_double('Aireview::ModelPool', rule: 'not_below_generate, weaker allowed'))
+
+    expect(pipeline.run(merge_request: merge_request, changes: changes)).to include('weaker than Generate')
+    expect(pipeline.run(merge_request: merge_request, changes: changes, critique: false))
+      .not_to include('weaker than Generate')
+    expect(pipeline.dry_run_prompts(merge_request: merge_request, changes: changes)[:critique_rule])
+      .to eq('not_below_generate, weaker allowed')
+    expect(pipeline.dry_run_prompts(merge_request: merge_request, changes: changes, critique: false)[:critique_rule]).to be_nil
+  end
+
+  it 'keeps generate candidates when critique restarts on another model' do
+    allow(reviewer).to receive(:generate).and_return(generate_result([candidates.first]))
+    allow(reviewer).to receive(:critique).and_return(
+      'not json', 'still not json',
+      JSON.generate(verdicts: [{ id: 'C1', decision: 'keep', reason: 'confirmed by diff' }])
+    )
+    allow(reviewer).to receive(:exclude_answered_model).and_return('gemini/gemini-3.8-flash')
+
+    result = pipeline.run(merge_request: merge_request, changes: changes)
+
+    expect(result).to include('Tax is no longer included')
+    expect(reviewer).to have_received(:generate).once
+    expect(reviewer).to have_received(:critique).exactly(3).times
+    expect(reviewer).to have_received(:exclude_answered_model).with(stage: 'critique', reason: /invalid result/)
   end
 
   it 'repairs invalid critique JSON once' do
@@ -407,7 +503,9 @@ RSpec.describe Aireview::ReviewPipeline do
       max_prompt_chars: 400_000, max_diff_chars: 600, max_mr_description_chars: 8_000,
       max_jira_description_chars: 8_000, max_jira_comment_chars: 2_000,
       generate_model: 'g', generate_temperature: 0, critique_model: 'c', critique_temperature: 0,
-      llm_time_budget: 1_800, fallback_names: [], api_key_counts: {'gemini' => 1}
+      llm_time_budget: 1_800, overloaded_quarantine: 120, fallback_names: [], warnings: [],
+      routing: instance_double('Aireview::StageChains', rule: nil), api_key_counts: {'gemini' => 1},
+      stage_model_source: nil, stage_fallbacks_source: nil, stage_provider_source: 'built-in', layer_paths: {}
     )
     pipeline = described_class.new(config: config, reviewer: reviewer, logger: logger)
     big = changes.first.merge('new_path' => 'big.rb', 'old_path' => 'big.rb', 'diff' => "@@ -1,3 +1,3 @@\n#{"+x\n" * 300}")
@@ -423,19 +521,21 @@ RSpec.describe Aireview::ReviewPipeline do
     expect(dry_run.dig(:generate_prompt, :user_prompt)).to include('[1 file(s) not shown: big.rb]')
   end
 
-  it 'refuses a repair request that exceeds the stage limit' do
-    allow(config).to receive(:max_prompt_chars).with(:generate).and_return(5_000)
-    allow(config).to receive(:max_prompt_chars).with(:critique).and_return(400_000)
+  it 'treats a repair request over the stage limit as an invalid result of that model' do
+    allow(config).to receive(:max_prompt_chars).with('generate').and_return(5_000)
+    allow(config).to receive(:max_prompt_chars).with('critique').and_return(400_000)
     allow(reviewer).to receive(:generate).and_return('not json ' * 1_000)
 
     expect { pipeline.run(merge_request: merge_request, changes: changes) }
-      .to raise_error(Aireview::ContextBudgetError, /Generate request is \d+ chars, over llm.generate.max_prompt_chars=5000/)
+      .to raise_error(Aireview::ParseError,
+                      /repair request does not fit the stage limit: Generate request is \d+ chars, over llm.generate.max_prompt_chars=5000/)
     expect(reviewer).to have_received(:generate).once
+    expect(reviewer).to have_received(:exclude_answered_model).with(stage: 'generate', reason: /repair request does not fit/)
   end
 
   it 'reports the fallback model used by a stage and lists reserves in dry-run output' do
-    allow(config).to receive(:fallback_names).with(:generate).and_return(['gemini/g2'])
-    allow(config).to receive(:api_key_counts).with([:generate]).and_return('gemini' => 2)
+    allow(config).to receive(:fallback_names).with('generate').and_return(['gemini/g2'])
+    allow(config).to receive(:api_key_counts).with(['generate']).and_return('gemini' => 2)
     allow(reviewer).to receive(:generate).and_return(generate_result([]))
     allow(reviewer).to receive(:fallback_models).and_return('generate' => 'gemini/g2')
 
@@ -447,6 +547,7 @@ RSpec.describe Aireview::ReviewPipeline do
     expect(dry_run[:critique_fallbacks]).to eq([])
     expect(dry_run[:api_keys]).to eq('gemini' => 2)
     expect(dry_run[:time_budget]).to eq(1_800)
+    expect(dry_run[:overloaded_quarantine]).to eq(120)
   end
 
   it 'checks candidates against the shown diff before the critique pass' do

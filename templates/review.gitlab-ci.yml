@@ -1,0 +1,107 @@
+# Merge request review job for the projects of an organization. A project
+# includes it from its .gitlab-ci.yml:
+#
+#   include:
+#     - project: your-group/aireview
+#       ref: stable
+#       file: /templates/review.gitlab-ci.yml
+#
+# Models, timeouts and the report language come from config/defaults.yml
+# inside the image; project rules come from .aireview.yml in the repository
+# root, if there is one. Secrets (AIREVIEW_GITLAB_TOKEN, GEMINI_API_KEYS) and
+# the proxy address are CI/CD variables of the project: group variables are
+# readable by any merge request of any project in the group (see README,
+# "Access to secrets").
+#
+# The runners are shell executors, so the image runs through docker run.
+# Config variables are passed by name (the list is Config.env_names): docker
+# passes only those set in the job environment, so a project can override a
+# model or a provider through its CI/CD variables, for example to replace an
+# unavailable model in an emergency.
+# The image tag is pinned: the stable branch points at a verified release,
+# updating or rolling back every project is one edit here. A project may
+# override AIREVIEW_IMAGE_TAG in its own variables.
+
+variables:
+  AIREVIEW_IMAGE: "registry.example.com/your-group/aireview"
+  AIREVIEW_IMAGE_TAG: "2.0.0"
+
+# The .post stage exists in every pipeline and runs last, a project does not
+# have to declare it; when: always — a review is useful with failing tests
+# too. A project can move the job by adding `aireview: {stage: ...}`.
+aireview:
+  stage: .post
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TITLE =~ /\[skip review\]/
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: always
+  variables:
+    GIT_DEPTH: 1
+    GITLAB_TOKEN: "$AIREVIEW_GITLAB_TOKEN"
+    REVIEW_MODE: "once"
+  allow_failure: true
+  interruptible: true
+  resource_group: "aireview-$CI_MERGE_REQUEST_IID"
+  script:
+    - docker pull "${AIREVIEW_IMAGE}:${AIREVIEW_IMAGE_TAG}"
+    # Mount the file only when it exists: docker run -v with a missing path
+    # would create a directory of that name on the host.
+    - >
+       AIREVIEW_CONFIG_MOUNT="";
+       if [ -f "$CI_PROJECT_DIR/.aireview.yml" ]; then
+         AIREVIEW_CONFIG_MOUNT="--volume=$CI_PROJECT_DIR/.aireview.yml:/app/.aireview.yml:ro";
+       fi
+    - >
+       docker run --rm
+       --network host
+       $AIREVIEW_CONFIG_MOUNT
+       -e "GITLAB_URL=$CI_SERVER_URL"
+       -e GITLAB_TOKEN
+       -e CI_PROJECT_ID
+       -e CI_JOB_ID
+       -e REVIEW_MODE
+       -e REVIEW_LANGUAGE
+       -e GEMINI_API_KEY
+       -e GEMINI_API_KEYS
+       -e LLM_API_KEY
+       -e LLM_API_BASE
+       -e OLLAMA_API_BASE
+       -e LLM_HTTP_PROXY
+       -e LLM_PROVIDER
+       -e LLM_TEMPERATURE
+       -e LLM_TIMEOUT
+       -e LLM_TIME_BUDGET
+       -e LLM_OVERLOADED_QUARANTINE
+       -e LLM_MAX_PROMPT_CHARS
+       -e LLM_MODELS
+       -e LLM_CRITIQUE_RANK
+       -e LLM_CRITIQUE_ALLOW_WEAKER
+       -e LLM_GENERATE_PROVIDER
+       -e LLM_GENERATE_MODEL
+       -e LLM_GENERATE_TEMPERATURE
+       -e LLM_GENERATE_MAX_PROMPT_CHARS
+       -e LLM_GENERATE_FALLBACK_MODEL
+       -e LLM_GENERATE_START
+       -e LLM_CRITIQUE_PROVIDER
+       -e LLM_CRITIQUE_MODEL
+       -e LLM_CRITIQUE_TEMPERATURE
+       -e LLM_CRITIQUE_MAX_PROMPT_CHARS
+       -e LLM_CRITIQUE_FALLBACK_MODEL
+       -e LLM_CRITIQUE_START
+       -e MAX_DIFF_CHARS
+       -e MAX_MR_DESCRIPTION_CHARS
+       -e MAX_JIRA_DESCRIPTION_CHARS
+       -e MAX_JIRA_COMMENT_CHARS
+       -e JIRA_URL
+       -e JIRA_LOGIN
+       -e JIRA_PASSWORD
+       "${AIREVIEW_IMAGE}:${AIREVIEW_IMAGE_TAG}"
+       review "$CI_MERGE_REQUEST_PROJECT_URL/-/merge_requests/$CI_MERGE_REQUEST_IID"
+       --post --verbose
+  timeout: 45m
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure

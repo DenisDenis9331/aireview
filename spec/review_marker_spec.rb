@@ -52,14 +52,51 @@ RSpec.describe Aireview::ReviewMarker do
         .not_to eq(described_class.key(prompts: prompts, config: config))
     end
 
-    it 'changes when the model changes' do
-      expect(described_class.key(prompts: prompts(generate_model: 'gemini-3.6-flash'), config: config))
+    it 'changes when the model or the temperature of a stage changes in the config' do
+      other_model = config('llm' => {'provider' => 'gemini', 'temperature' => 0,
+                                     'generate' => {'model' => 'gemini-3.6-flash'},
+                                     'critique' => {'model' => 'gemini-3.8-flash'}})
+      other_temperature = config('llm' => {'provider' => 'gemini', 'temperature' => 0,
+                                           'generate' => {'model' => 'gemini-3.7-flash', 'temperature' => 0.5},
+                                           'critique' => {'model' => 'gemini-3.8-flash'}})
+
+      expect(described_class.key(prompts: prompts, config: other_model))
         .not_to eq(described_class.key(prompts: prompts, config: config))
+      expect(described_class.key(prompts: prompts, config: other_temperature))
+        .not_to eq(described_class.key(prompts: prompts, config: config))
+    end
+
+    # Золотые ключи: смена состава ключа перепрогнала бы все открытые MR.
+    it 'stays byte-identical to the keys of the previous release' do
+      golden_prompts = prompts(generate_prompt: {system_prompt: 'system', user_prompt: 'diff'})
+      stage = config('llm' => {'provider' => 'gemini', 'generate' => {'model' => 'gemini-3.7-flash', 'temperature' => 0.1},
+                               'critique' => {'model' => 'gemini-3.8-flash'}})
+      pool = config('llm' => {'provider' => 'gemini', 'models' => %w[gemini-3.8-flash gemini-3.7-flash],
+                              'generate' => {'start' => 'gemini-3.7-flash', 'temperature' => 0.1}})
+
+      expect(described_class.key(prompts: golden_prompts, config: stage)).to eq('9ae278d453a80f43')
+      expect(described_class.key(prompts: golden_prompts, config: pool)).to eq('576d70cfbea178a1')
+      expect(described_class.key(prompts: golden_prompts.merge(critique_prompt: nil), config: stage)).to eq('783db3b9d42ab693')
     end
 
     it 'changes when the critique pass is disabled' do
       expect(described_class.key(prompts: prompts(critique_prompt: nil), config: config))
         .not_to eq(described_class.key(prompts: prompts, config: config))
+    end
+
+    it 'changes with the order and the policy of a shared pool' do
+      pool = { 'provider' => 'gemini', 'temperature' => 0, 'models' => %w[strong medium weak],
+               'generate' => {'start' => 'medium'}, 'critique' => {'allow_weaker' => false} }
+      strict = described_class.key(prompts: prompts, config: config('llm' => pool))
+      lenient = described_class.key(
+        prompts: prompts, config: config('llm' => pool.merge('critique' => {'allow_weaker' => true}))
+      )
+      reordered = described_class.key(prompts: prompts, config: config('llm' => pool.merge('models' => %w[strong weak medium])))
+
+      expect(strict).not_to eq(lenient)
+      expect(strict).not_to eq(reordered)
+      expect(strict).to eq(described_class.key(prompts: prompts, config: config('llm' => pool)))
+      expect(strict).not_to eq(described_class.key(prompts: prompts, config: config))
     end
 
     it 'ignores fallback models and extra keys: only the configured primary model counts' do

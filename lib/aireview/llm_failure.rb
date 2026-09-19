@@ -10,10 +10,20 @@ module Aireview
   # :rate_limit  — минутный лимит, пройдёт через подсказанное время;
   # :overloaded  — 503/«high demand» у модели;
   # :timeout     — ответа нет дольше LLM_TIMEOUT;
+  # :unavailable — модели нет у провайдера: закрыта, опечатка, не скачана в Ollama;
   # :fatal       — ошибка API, которую резервы не лечат;
   # :unhandled   — не ошибка провайдера, пробрасывается как есть.
   module LlmFailure
-    KINDS = %i[daily_quota rate_limit overloaded timeout fatal unhandled].freeze
+    KINDS = %i[daily_quota rate_limit overloaded timeout unavailable fatal unhandled].freeze
+    # Только по тексту провайдера про модель: голый 404 так же отдаёт неверный
+    # LLM_API_BASE или прокси, и следующая модель там не поможет.
+    # Ollama: `model 'x' not found` (через /v1) и `model "x" not found, try
+    # pulling it first` (старые версии и /api).
+    UNAVAILABLE_MODEL_TEXT = Regexp.union(
+      /\bmodels?\/[\w.:-]+ is not found\b/i,
+      /\bis not supported for generateContent\b/i,
+      /\bmodel ['"][^'"]+['"] not found\b/i
+    )
     QUOTA_FAILURE_TYPE = 'type.googleapis.com/google.rpc.QuotaFailure'
     DAILY_QUOTA_ID = /PerDay/i
     DAILY_QUOTA_TEXT = /\bper\s+day\b|\bdaily\b/i
@@ -28,7 +38,11 @@ module Aireview
       return :timeout if transport_timeout?(error)
       return :unhandled unless ruby_llm_error?(error)
 
-      quota_kind(error) || (overloaded?(error) ? :overloaded : :fatal)
+      quota_kind(error) || model_kind(error) || (overloaded?(error) ? :overloaded : :fatal)
+    end
+
+    def model_kind(error)
+      :unavailable if error.message.to_s.match?(UNAVAILABLE_MODEL_TEXT)
     end
 
     # Внешний Timeout.timeout и таймауты транспорта Faraday: последние не
@@ -86,5 +100,8 @@ module Aireview
       match = message.to_s.match(RETRY_AFTER)
       match[1].to_f if match
     end
+
+    private_class_method :model_kind, :transport_timeout?, :overloaded?, :ruby_llm_error?, :quota_kind,
+                         :daily_quota_id?, :quota_ids, :response_body
   end
 end
