@@ -1,0 +1,47 @@
+# Smoke test of the Ollama path with a small real model: both production
+# schemas against qwen2.5-coder:1.5b, plus the missing-model status. Checks
+# the integration (RubyLLM's Ollama provider, our client, schemas, checker
+# statuses), not review quality — a 1.5b model proves nothing about that.
+# Manual runs first; a schedule is added once the timing is known.
+name: Ollama check
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  models-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      ollama:
+        image: ollama/ollama
+        ports:
+          - 11434:11434
+    env:
+      OLLAMA_API_BASE: http://localhost:11434/v1
+      LLM_TIMEOUT: '600'
+      LLM_MODELS: ollama/qwen2.5-coder:1.5b
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: .ruby-version
+          bundler-cache: true
+      - name: Pull the model
+        run: docker exec ${{ job.services.ollama.id }} ollama pull qwen2.5-coder:1.5b
+      - name: Both schemas on the model, unreachable Ollama is a failure
+        run: bundle exec bin/aireview models check --strict --verbose
+      - name: A model Ollama does not have is reported as missing, not as a crash
+        env:
+          LLM_MODELS: ollama/nope:1b
+        run: |
+          set +e
+          output=$(bundle exec bin/aireview models check --strict 2>/dev/null)
+          status=$?
+          set -e
+          echo "$output"
+          test "$status" -eq 1
+          echo "$output" | grep -q "generate missing:"
