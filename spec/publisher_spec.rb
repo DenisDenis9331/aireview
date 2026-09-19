@@ -54,8 +54,8 @@ RSpec.describe Aireview::Publisher do
       expect(result).to eq(id: 2, key: 'deadbeef')
     end
 
-    # Клиент запрашивает заметки от новых к старым, поэтому первая подходящая в
-    # списке — самое свежее ревью.
+    # The client requests notes newest first, so the first match in the list
+    # is the latest review.
     it 'adopts the newest legacy review with an unknown key when no marker exists' do
       client = FakeGitlabClient.new(
         notes: [note(id: 3, body: "#{described_class::PREFIX}\n\nlatest review"),

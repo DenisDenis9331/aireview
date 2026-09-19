@@ -37,8 +37,8 @@ RSpec.describe Aireview::LlmFailure do
   it 'reads the quota kind from a real Google response body' do
     expect(described_class.classify(daily_quota_error)).to eq(:daily_quota)
     expect(described_class.classify(quota_error('GenerateRequestsPerMinutePerProjectPerModel-FreeTier'))).to eq(:rate_limit)
-    # RubyLLM превращает 429 со словом input_token в ContextLengthExceededError:
-    # это исчерпанная токенная квота, а не слишком длинный запрос.
+    # RubyLLM turns a 429 mentioning input_token into ContextLengthExceededError:
+    # it is an exhausted token quota, not an oversized request.
     token_quota = quota_error('GenerateRequestsPerDayPerProjectPerModel-FreeTier',
                               message: 'Quota exceeded for metric: generate_content_free_tier_input_token_count',
                               error_class: RubyLLM::ContextLengthExceededError)

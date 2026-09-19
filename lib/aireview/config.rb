@@ -10,9 +10,9 @@ require_relative 'config_layers'
 require_relative 'config_loader'
 
 module Aireview
-  # Ответы на вопросы по слитым настройкам: значения, их источник (слой),
-  # план маршрутизации, ключи провайдеров. Как настройки читаются из файлов
-  # и env — дело ConfigLoader.
+  # Answers questions about the merged settings: values, their source
+  # (layer), the routing plan, provider keys. How settings are read from
+  # files and the environment is ConfigLoader's business.
   class Config
     include ConfigLimits
     include ConfigFallbacks
@@ -63,10 +63,10 @@ module Aireview
       ConfigLoader.env_names
     end
 
-    # Единственный источник правды — слои: слитые данные считаются из них.
-    # Конфиг из готового хеша (без ConfigLoader) — один слой, иначе CLI-слой
-    # из with_overrides остался бы единственным, и стадийные настройки
-    # исходного хеша пропали бы.
+    # The layers are the single source of truth: the merged data is computed
+    # from them. A config built from a hash (without ConfigLoader) is one
+    # layer, otherwise the CLI layer from with_overrides would be the only
+    # one and the stage settings of the original hash would be lost.
     def initialize(data = nil, config_path: nil, logger: Logger.new($stderr), layers: nil)
       @layers = layers || [ConfigLayers::Layer.new(name: ConfigLayers::DATA_LAYER, data: Utils.normalize_hash(data))]
       @data = @layers.map(&:data).reduce({}) { |merged, layer_data| Utils.deep_merge(merged, layer_data) }
@@ -74,8 +74,8 @@ module Aireview
       @logger = logger
     end
 
-    # Переопределения из CLI меняют только основную модель стадии, запасные
-    # из конфига остаются; no_fallbacks оставляет одну модель и один ключ.
+    # CLI overrides change only the primary model of a stage, the reserves
+    # from the config stay; no_fallbacks leaves one model and one key.
     def with_overrides(
       generate_model: nil,
       critique_model: nil,
@@ -131,8 +131,8 @@ module Aireview
       dig('llm', 'timeout') || DEFAULTS.dig('llm', 'timeout')
     end
 
-    # Основная модель стадии — первая в её цепочке: стартовая для generate,
-    # первая пула для critique. Именно они идут в ключ ревью.
+    # The primary model of a stage is the first in its chain: the start for
+    # Generate, the first of the pool for Critique. These go into the review key.
     def generate_model
       routing.primary('generate').model
     end
@@ -145,9 +145,10 @@ module Aireview
       routing.primary('generate').provider
     end
 
-    # Всё, что кроме промпта влияет на результат ревью, — в ключ заметки
-    # (см. ReviewMarker): провайдер, модель и температура стадий, общий пул
-    # с политикой критики. Резервы стадийных цепочек результат не меняют.
+    # Everything besides the prompt that affects the review result goes into
+    # the note key (see ReviewMarker): provider, model and temperature of the
+    # stages, the shared pool with its critique policy. Reserves of per-stage
+    # chains do not change the result.
     def result_signature
       {
         'generate' => [generate_provider, generate_model, generate_temperature],
@@ -184,8 +185,8 @@ module Aireview
       @data['review_language'] || DEFAULTS['review_language']
     end
 
-    # update — обновляем свою заметку, когда дифф или настройки изменились,
-    # once — ревьюим один раз автоматически; Retry джоба обновляет ревью при изменениях.
+    # update — our note is updated when the diff or the settings changed,
+    # once — one automatic review; a job Retry updates the review on changes.
     def review_mode
       mode = (@data['review_mode'] || DEFAULTS['review_mode']).to_s
       return mode if REVIEW_MODES.include?(mode)
@@ -232,10 +233,11 @@ module Aireview
 
     private
 
-    # Без пула переопределение меняет только основную модель стадии, запасные
-    # остаются. С пулом режим стадии переключается явно: модель из пула
-    # становится стартовой, а своя model и fallbacks стадии сбрасываются;
-    # модель не из пула — одиночная цепочка, start и fallbacks сбрасываются.
+    # Without a pool an override changes only the primary model of the stage,
+    # the reserves stay. With a pool the stage mode switches explicitly: a
+    # model from the pool becomes the start and the stage's own model and
+    # fallbacks are reset; a model outside the pool is a single chain, start
+    # and fallbacks are reset.
     def stage_overrides(model:, temperature:)
       overrides = {'temperature' => temperature}.compact
       return overrides unless model

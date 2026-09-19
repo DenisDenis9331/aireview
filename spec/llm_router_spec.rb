@@ -4,7 +4,7 @@ require 'aireview/llm_router'
 require 'aireview/stage_chains'
 require 'aireview/model_pool'
 
-# Роутер на управляемых часах: sleep двигает время, реальных ожиданий нет.
+# The router on an injected clock: sleep moves the time, there is no real waiting.
 RSpec.describe Aireview::LlmRouter do
   include_context 'LLM errors'
 
@@ -22,8 +22,8 @@ RSpec.describe Aireview::LlmRouter do
       overloaded_quarantine: 120
     )
   end
-  # Настоящий план: одна цепочка на обе стадии — первая модель основная,
-  # остальные запасные в порядке списка.
+  # A real plan: one chain for both stages — the first model is primary, the
+  # rest are reserves in list order.
   let(:routing) do
     chains = %w[generate critique].to_h { |stage| [stage, models.map { |model| candidate(model) }] }
     Aireview::StageChains.new(chains)
@@ -52,8 +52,8 @@ RSpec.describe Aireview::LlmRouter do
     allow(router).to receive(:rand).with(Aireview::LlmRouter::RATE_LIMIT_JITTER_RANGE).and_return(3.0)
   end
 
-  # Сценарий — список ответов по моделям: исключение бросается, всё
-  # остальное возвращается. Вызовы пишутся как "model@time".
+  # A script is a list of answers per model: an exception is raised,
+  # anything else is returned. Calls are recorded as "model@time".
   def run(stage: 'generate', pinned: false, script:)
     calls = []
     result = router.call(stage: stage, request_chars: 10, pinned: pinned) do |route, _timeout|
@@ -128,7 +128,7 @@ RSpec.describe Aireview::LlmRouter do
         expect(error.message).to include('gemini/gemini-a: overloaded after 1 attempt(s)')
         expect(error.message).not_to include('attempt limit')
       end
-      # Последняя модель без привилегий: после третьей неудачи никаких 2/5/5/5 минут.
+      # The last model has no privileges: no 2/5/5/5 minutes after the third failure.
       expect(sleeps).to eq([30.0, 30.0, 90.0, 30.0])
     end
 
@@ -172,7 +172,7 @@ RSpec.describe Aireview::LlmRouter do
   describe 'a shared pool with a critique rank' do
     let(:models) { %w[gemini-pro gemini-flash gemini-lite] }
     let(:allow_weaker) { false }
-    # Настоящий пул: generate стартует со второй модели, критика — не ниже ответившей.
+    # A real pool: Generate starts from the second model, Critique not below the one that answered.
     let(:routing) do
       Aireview::ModelPool.new(items: models, provider: 'gemini', limits: {'generate' => 400_000, 'critique' => 400_000},
                               starts: {'generate' => 'gemini-flash'}, allow_weaker: allow_weaker)
@@ -285,7 +285,7 @@ RSpec.describe Aireview::LlmRouter do
   describe 'time budget' do
     let(:models) { %w[gemini-a gemini-b] }
 
-    # Запрос, который висит: каждый вызов двигает часы на 80 секунд.
+    # A hanging request: every call moves the clock by the given seconds.
     def run_slow(seconds:, script:)
       calls = []
       result = router.call(stage: 'generate', request_chars: 10) do |route, timeout|
@@ -316,7 +316,7 @@ RSpec.describe Aireview::LlmRouter do
       result, calls = run_slow(seconds: 70, script: {'gemini-a' => [daily_quota_error], 'gemini-b' => ['from b']})
 
       expect(result).to eq('from b')
-      # Первый запрос — полный LLM_TIMEOUT, второй — остаток бюджета.
+      # The first request gets the full LLM_TIMEOUT, the second the remainder of the budget.
       expect(calls).to eq([['gemini-a', 60.0], ['gemini-b', 30.0]])
     end
   end
@@ -332,8 +332,8 @@ RSpec.describe Aireview::LlmRouter do
       })
 
       expect(result).to eq('from b')
-      # Ключ 1 у модели a выбыл по квоте, ключ 2 перегружен дважды; модель b
-      # начинает с ключа 2 (перенос), по квоте на нём переходит к ключу 1.
+      # Key 1 of model a is out of quota, key 2 overloaded twice; model b
+      # starts from key 2 (carried over) and moves to key 1 on its quota.
       expect(calls).to eq(%w[gemini-a@0/1 gemini-a@0/2 gemini-a@30/2 gemini-b@30/2 gemini-b@30/1])
     end
 

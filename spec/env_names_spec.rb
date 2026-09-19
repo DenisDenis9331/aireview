@@ -1,9 +1,9 @@
 require 'aireview/config'
 
-# Config.env_names — список, который CI-шаблон пробрасывает в контейнер. Он
-# поддерживается руками, поэтому сверяется с тем, что код реально читает:
-# каждый литерал env['ИМЯ'] в lib/ обязан быть в списке, иначе переменная
-# проекта до ревью не доедет.
+# Config.env_names is the list the CI template passes into the container. It
+# is maintained by hand, so it is checked against what the code really reads:
+# every env['NAME'] literal in lib/ must be in the list, otherwise a project
+# variable never reaches the review.
 RSpec.describe 'Config.env_names' do
   it 'covers every env variable the config code reads' do
     sources = Dir[File.expand_path('../lib/aireview/config*.rb', __dir__)].map { |path| File.read(path) }.join

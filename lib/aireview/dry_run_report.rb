@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Aireview
-  # Вывод --dry-run: настройки, сводка контекста и промпты обеих стадий.
+  # The --dry-run output: settings, the context summary and the prompts of both stages.
   class DryRunReport
     def initialize(out)
       @out = out
@@ -51,8 +51,8 @@ module Aireview
       @out.puts("Config: #{paths.map { |name, path| "#{name} #{path}" }.join(', ')}")
     end
 
-    # Источник каждой настройки — слой, откуда она пришла: built-in, image
-    # defaults, .aireview.yml, env или cli.
+    # The source of every setting is the layer it came from: built-in, image
+    # defaults, .aireview.yml, env or cli.
     def render_stage(dry_run, stage)
       sources = dry_run.dig(:sources, stage) || {}
       @out.puts("#{stage.capitalize}: #{dry_run[:"#{stage}_model"]} " \

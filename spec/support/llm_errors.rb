@@ -1,7 +1,7 @@
 require 'json'
 
-# Ошибки провайдера с настоящими классами RubyLLM и телами ответов Google —
-# ими проверяется классификатор, роутер и клиент.
+# Provider errors with the real RubyLLM classes and Google response bodies —
+# the classifier, the router and the client are checked with them.
 RSpec.shared_context 'LLM errors' do
   def overloaded_error(message = 'This model is currently experiencing high demand')
     RubyLLM::ServiceUnavailableError.new(message)
@@ -11,7 +11,7 @@ RSpec.shared_context 'LLM errors' do
     RubyLLM::RateLimitError.new(message)
   end
 
-  # Ответ Google на исчерпанную квоту: вид квоты — в QuotaFailure.violations[].quotaId.
+  # Google's answer to an exhausted quota: the kind is in QuotaFailure.violations[].quotaId.
   def quota_error(quota_id, message: 'You exceeded your current quota. Please retry in 55s.',
                   error_class: RubyLLM::RateLimitError)
     body = {

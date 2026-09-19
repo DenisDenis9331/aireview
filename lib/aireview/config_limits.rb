@@ -2,9 +2,10 @@
 require_relative 'stages'
 
 module Aireview
-  # Лимиты контекста в символах: точного токенизатора для провайдеров локально
-  # нет, а окно Ollama задаётся на сервере и клиенту не видно. Дефолты щедрые,
-  # под конкретную модель их задают в .aireview.yml.
+  # Context limits in characters: there is no exact local tokenizer for the
+  # providers, and the Ollama window is set on the server, invisible to the
+  # client. The defaults are generous; a specific model gets its own in
+  # .aireview.yml.
   module ConfigLimits
     DEFAULT_MAX_PROMPT_CHARS = 400_000
     CONTEXT_DEFAULTS = {
@@ -13,8 +14,9 @@ module Aireview
       'max_jira_description_chars' => 8_000,
       'max_jira_comment_chars' => 2_000
     }.freeze
-    # Лимит всего запроса стадии в символах: системный промпт плюс контекст
-    # (для критика ещё и кандидаты). Наследуется из llm как model/temperature.
+    # The limit of the whole stage request in characters: the system prompt
+    # plus the context (plus the candidates for Critique). Inherited from llm
+    # like model/temperature.
     def max_prompt_chars(stage)
       stage = stage.to_s
       raise ArgumentError, "unknown LLM stage #{stage.inspect}" unless STAGES.include?(stage)

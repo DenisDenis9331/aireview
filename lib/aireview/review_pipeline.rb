@@ -10,9 +10,10 @@ require_relative 'review_schemas'
 require_relative 'reviewer'
 
 module Aireview
-  # Прогон ревью: контекст → generate → проверка привязки к диффу → critique
-  # → отчёт. Негодный JSON чинится один раз той же моделью; если и починка
-  # негодна, стадия перезапускается на другой модели с исходным запросом.
+  # A review run: context → Generate → anchoring check against the diff →
+  # Critique → report. Invalid JSON is repaired once by the same model; when
+  # the repair is invalid too, the stage restarts on another model with the
+  # original request.
   class ReviewPipeline
     SchemaError = ResultParser::SchemaError
 
@@ -107,7 +108,7 @@ module Aireview
 
     private
 
-    # Откуда пришли модель, провайдер и фолбеки стадии — для --dry-run.
+    # Where the model, provider and reserves of a stage came from, for --dry-run.
     def setting_sources(critique)
       (critique ? %w[generate critique] : %w[generate]).to_h do |stage|
         [stage.to_sym, {
@@ -118,11 +119,12 @@ module Aireview
       end
     end
 
-    # Стадия — запрос, разбор и одна починка той же моделью. Негодный
-    # результат после починки, как и починка без попыток, исключает модель
-    # для стадии, и стадия начинается заново на следующей — с исходным
-    # запросом. Ошибки API идут мимо: их резервами занимается роутер, а
-    # маршруты кончились — значит, кончились и для перезапуска.
+    # A stage is a request, parsing and one repair by the same model. An
+    # invalid result after the repair, like a repair with no requests left,
+    # excludes the model for the stage, and the stage starts over on the next
+    # one — with the original request. API errors pass through: the router
+    # handles them with reserves, and exhausted routes are exhausted for a
+    # restart too.
     def run_stage(stage)
       loop do
         return yield
@@ -135,8 +137,8 @@ module Aireview
       end
     end
 
-    # Привязка к коду проверяется по диффу, который видела модель, до критика:
-    # ему уходят пометки, в отчёт — сброшенная строка и знак ненайденной цитаты.
+    # Anchoring is checked against the diff the model saw, before Critique:
+    # it gets the notes, the report gets the reset line and the missing-quote mark.
     def check_candidates(context:, changes:, candidates:)
       CandidateChecker.new(
         changes: changes,
@@ -151,8 +153,8 @@ module Aireview
       candidates
     end
 
-    # Критику нечего фильтровать без кандидатов: запрос к LLM был бы пустой
-    # тратой квоты и времени.
+    # Critique has nothing to filter without candidates: the LLM request
+    # would waste quota and time.
     def maybe_critique(context:, candidates:)
       return skip_critique(candidates, 'no candidates') if candidates.empty?
 
@@ -258,9 +260,9 @@ module Aireview
       end
     end
 
-    # Починка, которая не помещается в лимит стадии, — негодный результат
-    # этой модели, а не ошибка размера исходного запроса: стадия уходит на
-    # следующую модель с исходным промптом.
+    # A repair that does not fit the stage limit is an invalid result of this
+    # model, not a size error of the original request: the stage moves to
+    # the next model with the original prompt.
     def repair_prompt(stage, user_prompt)
       @context_builder.check_stage_size!(stage, REPAIR_SYSTEM_PROMPT, user_prompt)
     rescue ContextBudgetError => e

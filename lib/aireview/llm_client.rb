@@ -4,13 +4,12 @@ require_relative 'errors'
 require_relative 'utils'
 
 module Aireview
-  # Один запрос к одной модели с одним ключом через RubyLLM. Повторами,
-  # ключами и резервами занимается LlmRouter: встроенные ретраи
-  # RubyLLM/Faraday (по умолчанию 3) выключены, иначе каждая попытка
-  # роутера превращалась бы в четыре HTTP-запроса и жгла квоту до того,
-  # как ошибка дойдёт до классификатора.
+  # One request to one model with one key through RubyLLM. Retries, keys and
+  # reserves belong to LlmRouter: the built-in RubyLLM/Faraday retries (3 by
+  # default) are off, otherwise every router attempt would turn into four
+  # HTTP requests and burn quota before the error reaches the classifier.
   class LlmClient
-    # Что стадия отправляет модели; одинаково для всех маршрутов стадии.
+    # What a stage sends to the model; the same for every route of the stage.
     Prompt = Struct.new(:stage, :system, :user, :temperature, :schema, keyword_init: true) do
       def chars
         system.length + user.length
@@ -23,8 +22,8 @@ module Aireview
       @contexts = {}
     end
 
-    # Возвращает ответ RubyLLM (content — текст или структура по схеме).
-    # Ошибка запроса пробрасывается как есть — её классифицирует LlmFailure.
+    # Returns the RubyLLM answer (content is text or a structure by the
+    # schema). A request error is re-raised as is — LlmFailure classifies it.
     def request(prompt, candidate:, key:, timeout:, key_index: 0)
       load_ruby_llm
       stage = prompt.stage.to_s
@@ -70,8 +69,8 @@ module Aireview
       context.chat(model: model, provider: provider.to_sym, assume_model_exists: true)
     end
 
-    # Контекст RubyLLM на стадию, провайдера и номер ключа: смена ключа —
-    # это другой контекст, а не правка глобального конфига.
+    # A RubyLLM context per stage, provider and key index: switching the key
+    # is another context, not an edit of the global config.
     def context(stage, provider, key, key_index)
       @contexts[[stage, provider, key_index]] ||= build_context(provider.to_s, key)
     end

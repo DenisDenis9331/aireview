@@ -7,18 +7,18 @@ require_relative 'stage_chains'
 require_relative 'model_pool'
 
 module Aireview
-  # Резервы на случай, когда основная модель лежит или у ключа кончилась
-  # квота: план маршрутизации (см. StageChains и ModelPool) и список ключей
-  # на провайдера. Модели задаются в .aireview.yml или env, ключи — только
-  # в env.
+  # Reserves for when the primary model is down or a key is out of quota:
+  # the routing plan (see StageChains and ModelPool) and the list of keys
+  # per provider. Models are set in .aireview.yml or the environment, keys
+  # only in the environment.
   module ConfigFallbacks
     KEYLESS_PROVIDERS = %w[ollama].freeze
     DEFAULT_TIME_BUDGET = 1_800
     DEFAULT_OVERLOADED_QUARANTINE = 120
 
-    # План маршрутизации строится один раз: общий пул, если задан llm.models,
-    # иначе независимые цепочки стадий. Стадия со своей model внутри пула —
-    # независимая цепочка.
+    # The routing plan is built once: a shared pool when llm.models is set,
+    # independent stage chains otherwise. A stage with a model of its own
+    # inside the pool is an independent chain.
     def routing
       @routing ||= build_routing
     end
@@ -27,8 +27,8 @@ module Aireview
       routing.chain(stage)
     end
 
-    # Ключи в порядке предпочтения; для провайдера без ключей — один nil,
-    # чтобы обход цепочки не зависел от провайдера.
+    # Keys in order of preference; a single nil for a keyless provider, so
+    # that walking the chain does not depend on the provider.
     def provider_api_keys(provider)
       provider = provider.to_s
       return [nil] if KEYLESS_PROVIDERS.include?(provider)
@@ -46,22 +46,22 @@ module Aireview
       stage_chain(stage).drop(1).map(&:to_s)
     end
 
-    # Только число ключей на провайдера — для --dry-run; значения наружу не
-    # выходят.
+    # Only the number of keys per provider, for --dry-run; the values never
+    # leave.
     def api_key_counts(stages)
       providers = stages.flat_map { |stage| stage_chain(stage).map(&:provider) }.uniq
       providers.reject { |provider| KEYLESS_PROVIDERS.include?(provider.to_s) }
         .to_h { |provider| [provider, provider_api_keys(provider).size] }
     end
 
-    # Общий потолок на все LLM-запросы прогона вместе с паузами между
-    # попытками: цепочка резервов не должна съедать всю CI-джобу.
+    # The ceiling for all LLM requests of the run, pauses between attempts
+    # included: the chain of reserves must not eat the whole CI job.
     def llm_time_budget
       positive_integer!(dig('llm', 'time_budget') || DEFAULT_TIME_BUDGET, 'llm.time_budget')
     end
 
-    # Сколько секунд перегруженная или зависшая модель пропускается, прежде
-    # чем роутер попробует её снова.
+    # For how many seconds an overloaded or hung model is skipped before the
+    # router tries it again.
     def overloaded_quarantine
       positive_integer!(dig('llm', 'overloaded_quarantine') || DEFAULT_OVERLOADED_QUARANTINE,
                         'llm.overloaded_quarantine')
@@ -74,8 +74,8 @@ module Aireview
       raise ConfigError, "LLM models are required: #{missing.join(', ')}" unless missing.empty?
     end
 
-    # План строится целиком (с проверкой пула и политики критики) до первого
-    # запроса, а не в критике после оплаченного generate.
+    # The plan is built whole (pool and critique policy validated) before the
+    # first request, not in Critique after a paid-for Generate.
     def require_llm_configuration!
       require_models!
       routing

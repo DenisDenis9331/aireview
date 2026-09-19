@@ -10,9 +10,9 @@ module Aireview
       @logger = logger
     end
 
-    # Собственная заметка с ревью: {id:, key:} или nil. Метки недостаточно —
-    # её может процитировать кто угодно, поэтому сверяем ещё и автора. Старый
-    # формат без метки подхватываем только если заметки с меткой нет.
+    # Our own review note: {id:, key:} or nil. The marker alone is not
+    # enough — anyone can quote it, so the author is checked too. The old
+    # format without a marker is picked up only when no marked note exists.
     def existing_review(project_id:, iid:)
       author_id = current_user_id
       legacy = nil
@@ -49,9 +49,9 @@ module Aireview
       "#{ReviewMarker.build(key)}\n#{PREFIX}\n\n#{review_body}"
     end
 
-    # Без надёжного автора матчинг по одной метке небезопасен: процитировать её
-    # может кто угодно, и тогда чужая заметка либо отменит ревью, либо будет
-    # перезаписана. Поэтому ошибку не глушим.
+    # Without a reliable author, matching by the marker alone is unsafe:
+    # anyone can quote it, and then someone else's note would either cancel
+    # the review or be overwritten. So the error is not swallowed.
     def current_user_id
       return @current_user_id if defined?(@current_user_id)
 

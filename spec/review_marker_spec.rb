@@ -66,7 +66,7 @@ RSpec.describe Aireview::ReviewMarker do
         .not_to eq(described_class.key(prompts: prompts, config: config))
     end
 
-    # Золотые ключи: смена состава ключа перепрогнала бы все открытые MR.
+    # Golden keys: changing what goes into the key would re-review every open MR.
     it 'stays byte-identical to the keys of the previous release' do
       golden_prompts = prompts(generate_prompt: {system_prompt: 'system', user_prompt: 'diff'})
       stage = config('llm' => {'provider' => 'gemini', 'generate' => {'model' => 'gemini-3.7-flash', 'temperature' => 0.1},

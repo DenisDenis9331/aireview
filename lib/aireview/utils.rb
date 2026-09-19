@@ -15,8 +15,8 @@ module Aireview
       present?(value) ? value.to_s.strip : nil
     end
 
-    # Слияние настроек по ключам: вложенные хеши сливаются, всё остальное
-    # (в том числе массивы) правая сторона заменяет целиком.
+    # Merges settings by key: nested hashes merge, everything else (arrays
+    # included) is replaced by the right side as a whole.
     def deep_merge(left, right)
       left.merge(right) do |_, old_value, new_value|
         if old_value.is_a?(Hash) && new_value.is_a?(Hash)
@@ -27,8 +27,8 @@ module Aireview
       end
     end
 
-    # Ключи хешей — строки на любой глубине: YAML, env и ответы LLM приходят
-    # по-разному, дальше все работают с одним видом.
+    # Hash keys are strings at any depth: YAML, env and LLM answers arrive in
+    # different shapes, everything downstream works with one.
     def normalize_hash(value)
       case value
       when Hash

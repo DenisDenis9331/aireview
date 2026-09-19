@@ -5,16 +5,16 @@ require_relative 'model_candidate'
 require_relative 'stages'
 
 module Aireview
-  # План маршрутизации из независимых цепочек: у каждой стадии своя основная
-  # модель и запасные в порядке обхода. Критика не зависит от того, какая
-  # модель ответила в generate.
+  # A routing plan of independent chains: every stage has its own primary
+  # model and reserves in walking order. Critique does not depend on which
+  # model answered in Generate.
   #
-  # Интерфейс плана (его же реализует ModelPool): chain(stage),
+  # The plan interface (ModelPool implements it too): chain(stage),
   # critique_chain(after:), primary(stage), weaker?, signature, rule,
   # pool?, pool_stage?, pool_member?, start_used?, warnings.
   class StageChains
-    # settings — по стадиям: provider, model, fallbacks (сырой список из
-    # конфига), max_prompt_chars. only_primary оставляет одну модель.
+    # settings — per stage: provider, model, fallbacks (the raw list from the
+    # config), max_prompt_chars. only_primary keeps one model.
     def self.build(settings, only_primary: false)
       chains = settings.to_h do |stage, stage_settings|
         [stage.to_s, stage_chain(stage.to_s, stage_settings, only_primary: only_primary)]
@@ -33,8 +33,8 @@ module Aireview
       [primary, *fallbacks(stage, Array(settings[:fallbacks]), primary)]
     end
 
-    # Запасная без провайдера наследует провайдера стадии, без предела — её
-    # предел.
+    # A reserve without a provider inherits the stage provider, without a
+    # limit its limit.
     def self.fallbacks(stage, items, primary)
       items.each_with_index.map do |item, index|
         item = ModelCandidate.parse_item(item)

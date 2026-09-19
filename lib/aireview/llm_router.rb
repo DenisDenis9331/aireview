@@ -5,12 +5,13 @@ require_relative 'llm_failure'
 require_relative 'model_state'
 
 module Aireview
-  # Обход пула моделей и ключей стадии. Перегрузка — свойство модели,
-  # квота — свойство «ключ + модель», поэтому по 503 меняется модель, по
-  # квоте — ключ. Перегруженная модель уходит в карантин и пропускается,
-  # пока он не истёк; когда цепочка пройдена, обход идёт по кругу по
-  # моделям с истёкшим карантином. Ограничители: общий бюджет времени
-  # прогона и предел отправленных запросов на модель в стадии (ModelState).
+  # Walks the models and keys of a stage. An overload is a property of the
+  # model, a quota is a property of "key + model", so a 503 switches the
+  # model and a quota switches the key. An overloaded model goes into
+  # quarantine and is skipped until it expires; once the chain has been
+  # walked, the walk goes round again over the models whose quarantine has
+  # expired. Two limits: the time budget of the run and the number of
+  # requests sent per model per stage (ModelState).
   class LlmRouter # rubocop:disable Metrics/ClassLength
     Route = Struct.new(:candidate, :candidate_index, :key, :key_index, :key_count, keyword_init: true) do
       def fallback?
@@ -22,8 +23,9 @@ module Aireview
       end
     end
 
-    # Запись журнала визита к маршруту — для сообщения об ошибке: либо вид
-    # отказа с числом запросов, либо заметка, почему маршрут пропущен.
+    # A journal entry about a visit to a route, for the error message: either
+    # the kind of failure with the number of requests, or a note on why the
+    # route was skipped.
     Visit = Struct.new(:route, :kind, :tries, :error, :note, keyword_init: true) do
       def to_s
         "#{route}: #{note || "#{LlmRouter::KIND_LABELS.fetch(kind)} after #{tries} attempt(s)"}"
@@ -31,7 +33,7 @@ module Aireview
     end
 
     Slot = Struct.new(:candidate, :index)
-    # Ключ, с которого следующая модель того же провайдера продолжает обход.
+    # The key the next model of the same provider continues from.
     Carry = Struct.new(:provider, :key_index)
     Delay = Struct.new(:seconds, :source)
 
@@ -46,8 +48,8 @@ module Aireview
     }.freeze
 
     MAX_ATTEMPTS_PER_MODEL = ModelState::MAX_REQUESTS_PER_STAGE
-    # Первая неудача за визит к модели даёт один короткий повтор, вторая —
-    # карантин и переход к следующей модели.
+    # The first failure of a visit to a model gets one short retry, the
+    # second one a quarantine and the next model.
     SHORT_RETRY_DELAY = 30.0
     SHORT_RETRY_JITTER_RANGE = 0.85..1.15
     RATE_LIMIT_BASE_DELAY = 2.0
@@ -56,8 +58,8 @@ module Aireview
     RETRY_WAIT_LOG_FORMAT = 'LLM %<stage>s request will sleep %<delay>.1fs before retry%<source>s ' \
                             '(request %<next_request>d/%<max_requests>d of the model in this stage, model=%<model>s)'
 
-    # clock и sleeper подменяются в тестах: расписание проверяется без
-    # реальных ожиданий.
+    # clock and sleeper are injected in tests: the schedule is checked without
+    # real waiting.
     def initialize(config:, logger:, routing: nil, clock: nil, sleeper: nil)
       @config = config
       @routing = routing || config.routing
@@ -70,11 +72,12 @@ module Aireview
       @deadline = nil
     end
 
-    # Блок получает маршрут и таймаут запроса, делает запрос и возвращает
-    # ответ. Ошибка блока классифицируется, дальше — повтор, другой ключ,
-    # другая модель или ApiError, когда маршруты кончились. pinned — только
-    # модель, ответившая в этой стадии последней (починка JSON): её отказ —
-    # RouteExhaustedError, стадия перезапускается на другой модели.
+    # The block receives a route and a request timeout, makes the request and
+    # returns the answer. An error raised by the block is classified, then
+    # comes a retry, another key, another model, or ApiError once the routes
+    # are exhausted. pinned — only the model that answered last in this
+    # stage (the JSON repair): its failure is RouteExhaustedError, and the
+    # stage restarts on another model.
     def call(stage:, request_chars:, pinned: false, &request)
       @deadline ||= now + @config.llm_time_budget
       visits = []
@@ -92,12 +95,12 @@ module Aireview
       end
     end
 
-    # Стадии, ответившие не основной моделью: для строки в отчёте.
+    # Stages answered by a model other than the primary one, for the report.
     def fallback_models
       @used.select { |_, route| route.fallback? }.transform_values { |route| route.candidate.to_s }
     end
 
-    # Модель, ответившая в стадии последней, и её место в цепочке.
+    # The model that answered last in the stage and its place in the chain.
     def answered(stage)
       route = @used[stage.to_s]
       return nil unless route
@@ -105,7 +108,7 @@ module Aireview
       "#{route.candidate} (#{route.candidate_index + 1}/#{chain_for(stage.to_s).size})"
     end
 
-    # Критика ответила моделью ниже generate по пулу — для строки в отчёте.
+    # Critique answered with a model below Generate in the pool, for the report.
     def critique_weaker?
       generate = @used['generate']
       critique = @used['critique']
@@ -114,9 +117,10 @@ module Aireview
       @routing.weaker?(critique.candidate, generate.candidate)
     end
 
-    # Исключает ответившую модель до конца стадии: результат от неё негоден
-    # (не JSON, не та схема) и после починки тоже. Следующий запрос стадии
-    # уйдёт другой модели. Возвращает исключённую модель; nil — исключать нечего.
+    # Excludes the model that answered until the end of the stage: its result
+    # is invalid (not JSON, not the schema) even after the repair. The next
+    # request of the stage goes to another model. Returns the excluded model;
+    # nil — nothing to exclude.
     def exclude_answered(stage:, reason:)
       route = @used[stage.to_s]
       return nil unless route
@@ -136,9 +140,9 @@ module Aireview
       @models[candidate.to_s]
     end
 
-    # Модели, которые ещё можно пробовать, в порядке обхода. Пропущенная
-    # модель попадает в журнал один раз за вызов, и только если её там ещё
-    # нет с ошибкой этого же вызова.
+    # The models that can still be tried, in walking order. A skipped model
+    # enters the journal once per call, and only if it is not already there
+    # with an error of this same call.
     def available_slots(stage, request_chars, pinned, visits, noted)
       chain = pinned ? pinned_chain(stage) : ordered_chain(stage)
       chain.filter_map do |candidate, index|
@@ -169,8 +173,8 @@ module Aireview
       end
     end
 
-    # Первая модель без карантина; если все в карантине — ждём ближайшего
-    # освобождения, когда это помещается в бюджет. nil — не помещается.
+    # The first model not in quarantine; when all are, wait for the nearest
+    # release if it fits into the budget. nil — it does not.
     def ready_slot(stage, slots, visits)
       ensure_time_left!(stage, bare_route(slots.first.candidate, slots.first.index), visits)
       moment = now
@@ -191,13 +195,14 @@ module Aireview
       slot
     end
 
-    # При :next_model отдаёт текущий ключ: перегрузка — свойство модели, и
-    # следующая модель того же провайдера продолжает с того же ключа, а не
-    # возвращается к первому, у которого квота могла уже кончиться.
+    # On :next_model hands over the current key: an overload is a property of
+    # the model, and the next model of the same provider continues from the
+    # same key instead of going back to the first one, whose quota may
+    # already be gone.
     #
-    # Каждый визит либо отправляет запрос, либо исключает модель: иначе обход
-    # по кругу не остановится. Модель, у которой все ключи выбыли по суточной
-    # квоте, исключается до конца прогона.
+    # Every visit either sends a request or excludes the model: otherwise the
+    # walk round the pool would never stop. A model whose keys are all out of
+    # daily quota is excluded until the end of the run.
     def try_candidate(stage, slot, visits, carry, &request)
       routes = candidate_routes(stage, slot, carry)
       tried = false
@@ -214,10 +219,10 @@ module Aireview
       [:next_model, carry]
     end
 
-    # Ключи начинаются с перенесённого (после перегрузки — текущий ключ,
-    # после ответа — ответивший), остальные идут следом: квота привязана к
-    # сочетанию «ключ + модель», ошибка на одной модели не списывает ключ
-    # для другой.
+    # The keys start from the carried one (after an overload — the current
+    # key, after an answer — the one that answered), the rest follow: a quota
+    # is bound to "key + model", a failure on one model does not write the
+    # key off for another.
     def candidate_routes(stage, slot, carry)
       keys = @config.provider_api_keys(slot.candidate.provider)
       routes = keys.each_with_index.map do |key, key_index|
@@ -234,8 +239,9 @@ module Aireview
       cursor_candidate == slot.index ? cursor_key : 0
     end
 
-    # Визит к маршруту: запросы до ответа, повтора или отказа. try — номер
-    # запроса в этом визите, счётчик модели на стадию ведёт ModelState.
+    # A visit to a route: requests until an answer, a retry or a refusal. try
+    # is the request number within this visit; the per-stage counter of the
+    # model is kept by ModelState.
     def try_route(stage, route, visits)
       model = state(route.candidate)
       try = 0
@@ -254,7 +260,7 @@ module Aireview
       end
     end
 
-    # :retry — пауза выдержана, можно повторять; иначе решение для маршрута.
+    # :retry — the pause has been waited out, retry; otherwise the decision for the route.
     def handle_failure(stage, route, try, error, visits)
       kind = LlmFailure.classify(error)
       raise error if kind == :unhandled
@@ -280,7 +286,7 @@ module Aireview
       false
     end
 
-    # :retry с паузой, :next_key, :next_model или :fail.
+    # :retry with a delay, :next_key, :next_model or :fail.
     def decide(kind, try, error)
       case kind
       when :fatal then [:fail]
@@ -295,10 +301,10 @@ module Aireview
       kind == :rate_limit ? :next_key : :next_model
     end
 
-    # Суточная квота помечает ключ у модели, отсутствующая модель — модель
-    # на весь прогон, перегрузка и таймаут — карантин, минутный лимит —
-    # карантин на время подсказки провайдера (следующий ключ пробуется
-    # сразу, карантин действует только на следующий визит к модели).
+    # A daily quota marks the key of the model, a missing model marks the
+    # model for the whole run, an overload or a timeout quarantines it, a
+    # per-minute limit quarantines it for the provider's hint (the next key
+    # is tried at once; the quarantine only affects the next visit).
     def record_failure(stage, route, kind, decision, error)
       model = state(route.candidate)
       case kind
@@ -328,7 +334,7 @@ module Aireview
                                           hint: hint, multiplier: multiplier))
     end
 
-    # false — пауза не помещается в бюджет времени, повтора не будет.
+    # false — the pause does not fit into the time budget, no retry.
     def waited_before_retry?(stage, route, delay)
       if delay.seconds > remaining_time
         @logger.warn(
@@ -370,8 +376,8 @@ module Aireview
       true
     end
 
-    # Ответившая модель не перегружена, какой бы ключ ни ответил: карантин,
-    # выставленный по другому ключу той же модели, снимается.
+    # A model that answered is not overloaded, whichever key answered: a
+    # quarantine set through another key of the same model is lifted.
     def remember(stage, route, response)
       @cursor[stage] = [route.candidate_index, route.key_index]
       @used[stage] = route
@@ -385,26 +391,26 @@ module Aireview
       @logger.warn("LLM #{stage}: switching to #{route} after #{visits.last}")
     end
 
-    # --- порядок обхода моделей ---
+    # --- walking order ---
 
-    # Следующий запрос стадии (например, починка JSON) начинается с модели,
-    # которая ответила; остальные остаются в резерве после неё.
+    # The next request of the stage (the JSON repair, for instance) starts
+    # from the model that answered; the rest stay in reserve after it.
     def ordered_chain(stage)
       start_candidate, = @cursor.fetch(stage, [0, 0])
       chain_for(stage).each_with_index.to_a.rotate(start_candidate)
     end
 
-    # Цепочка критики зависит от того, какая модель ответила в generate:
-    # при общем пуле критика не опускается ниже неё. Считается один раз на
-    # стадию, чтобы починка и перезапуск шли по той же цепочке.
+    # The critique chain depends on the model that answered in Generate:
+    # with a shared pool Critique does not go below it. Computed once per
+    # stage so that the repair and a restart walk the same chain.
     def chain_for(stage)
       @chains ||= {}
       @chains[stage] ||= build_chain(stage)
     end
 
-    # Предупреждения плана, возникшие при построении цепочки (например,
-    # проигнорированный critique.start), CLI при старте ещё не видел —
-    # печатает роутер.
+    # Warnings the plan raises while building a chain (an ignored
+    # critique.start, for instance) were not there when the CLI started —
+    # the router logs them.
     def build_chain(stage)
       known = @routing.warnings.size
       chain = if stage == 'critique' && @used['generate']
@@ -423,14 +429,14 @@ module Aireview
       [[route.candidate, route.candidate_index]]
     end
 
-    # --- тексты ошибок ---
+    # --- error messages ---
 
     def exhausted_error(stage, visits, pinned)
       (pinned ? RouteExhaustedError : ApiError).new(exhausted_message(stage, visits))
     end
 
-    # Одна ошибка на одном маршруте — короткое сообщение про неё; иначе
-    # перечень маршрутов с причинами.
+    # One error on one route — a short message about it; otherwise the list
+    # of routes with reasons.
     def exhausted_message(stage, visits)
       return single_route_message(visits.first.error) if visits.size == 1 && visits.first.error
 

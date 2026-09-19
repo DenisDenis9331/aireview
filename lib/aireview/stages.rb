@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Aireview
-  # Две стадии ревью: generate ищет замечания, critique их проверяет.
-  # Единственное определение; внутри кода стадия — строка.
+  # The two review stages: Generate finds the findings, Critique checks them.
+  # The single definition; inside the code a stage is a string.
   STAGES = %w[generate critique].freeze
 end

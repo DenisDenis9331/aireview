@@ -3,19 +3,19 @@ require 'json'
 require_relative 'utils'
 
 module Aireview
-  # Разбор и проверка формы ответа LLM: JSON (в том числе в code fences)
-  # или уже структура по схеме → хеш со строковыми ключами и проверенными
-  # id. Ошибка формы — SchemaError; чинить ли ответ повторным запросом,
-  # решает пайплайн. Тем же разбором `aireview models check` судит, держит
-  # ли модель схему.
+  # Parses and validates the shape of an LLM answer: JSON (code fences
+  # included) or a ready structure by the schema → a hash with string keys
+  # and checked ids. A shape error is SchemaError; whether to repair the
+  # answer with another request is the pipeline's decision. The same parser
+  # lets `aireview models check` judge whether a model holds the schema.
   class ResultParser
     class SchemaError < StandardError
     end
 
     DECISIONS = %w[keep reject].freeze
 
-    # expected — :generate или :critique; critique_candidate_ids — id
-    # кандидатов, на каждый из которых критика обязана дать вердикт.
+    # expected — :generate or :critique; critique_candidate_ids — the
+    # candidate ids Critique must give a verdict on, each of them.
     def parse(raw, expected:, critique_candidate_ids: nil)
       parsed = Utils.normalize_hash(raw.is_a?(Hash) ? raw : JSON.parse(strip_code_fences(raw.to_s)))
 

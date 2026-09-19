@@ -3,8 +3,8 @@ require 'aireview/llm_client'
 require 'aireview/model_candidate'
 require 'aireview/output_schemas'
 
-# Граница с RubyLLM: один запрос к одной модели с одним ключом. Контекст
-# RubyLLM подменяется явно, chat — дубль; в сеть спек не ходит.
+# The RubyLLM boundary: one request to one model with one key. The RubyLLM
+# context is stubbed explicitly, chat is a double; the spec never touches the network.
 RSpec.describe Aireview::LlmClient do
   let(:config) do
     instance_double(
@@ -136,8 +136,8 @@ RSpec.describe Aireview::LlmClient do
     end
   end
 
-  # Провайдеры, достижимые через LLM_PROVIDER + LLM_API_KEY, хотя в дефолтах
-  # образа их нет: ключ и адрес API уходят в поля именно этого провайдера.
+  # Providers reachable through LLM_PROVIDER + LLM_API_KEY although the image
+  # defaults do not carry them: the key and the API base go into that provider's fields.
   describe 'other providers' do
     it 'configures OpenRouter and OpenAI with the generic key and API base' do
       request(candidate: candidate('openrouter', 'openrouter/auto'), key: 'router-key')

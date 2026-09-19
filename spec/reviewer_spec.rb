@@ -2,10 +2,10 @@ require 'stringio'
 require 'aireview/reviewer'
 require 'aireview/stage_chains'
 
-# Стадии поверх роутера и клиента: сам обход моделей проверяет
-# llm_router_spec, запрос — llm_client_spec; здесь — что стадии собирают
-# промпт, что роутер и клиент состыкованы, и два сквозных сценария с
-# настоящим роутером и настоящими ошибками провайдера.
+# The stages on top of the router and the client: walking the models is
+# checked by llm_router_spec, the request by llm_client_spec; here — that
+# the stages build the prompt, that the router and the client fit together,
+# and two end-to-end scenarios with the real router and real provider errors.
 RSpec.describe Aireview::Reviewer do
   include_context 'LLM errors'
 
@@ -47,7 +47,7 @@ RSpec.describe Aireview::Reviewer do
     Aireview::ModelCandidate.new(provider: provider, model: model, max_prompt_chars: 400_000)
   end
 
-  # Клиент отвечает по сценарию «модель → ответы»; каждый вызов записывается.
+  # The client answers by a "model → answers" script; every call is recorded.
   def answers(script)
     allow(client).to receive(:request) do |prompt, candidate:, key:, timeout:, key_index: 0|
       requests << {stage: prompt.stage, model: candidate.model, key: key, key_index: key_index, timeout: timeout,

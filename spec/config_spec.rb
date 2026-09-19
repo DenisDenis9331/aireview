@@ -724,7 +724,7 @@ RSpec.describe Aireview::Config do
           expect(config.generate_temperature).to eq(0.7)
           expect(config.critique_temperature).to eq(0.7)
           expect(config.stage_provider_source('generate')).to eq('env')
-          # Явный провайдер запасной модели не наследуется и не меняется.
+          # The explicit provider of a reserve is neither inherited nor changed.
           expect(config.stage_chain(:generate).map(&:to_s)).to eq(%w[ollama/qwen2.5-coder:7b gemini/image-reserve])
 
           config = load_layered(dir, image: image, yaml: "llm:\n  provider: ollama\n  generate:\n    model: g\n")
@@ -927,7 +927,7 @@ RSpec.describe Aireview::Config do
           expect(pool.map(&:provider).uniq).to eq(['gemini'])
           expect(pool.map(&:model)).to all(match(/\A[a-z0-9.-]+\z/))
           expect(pool.map(&:model)).not_to include(a_string_matching(/preview|exp/))
-          # Generate стартует не с самой сильной модели, критика — с самой сильной.
+          # Generate does not start from the strongest model; Critique does.
           expect(config.stage_chain(:generate).first.model).to eq('gemini-3.7-flash')
           expect(config.stage_chain(:critique).first.model).to eq('gemini-3.8-flash')
           expect(config.routing.rule).to eq('not_below_generate')

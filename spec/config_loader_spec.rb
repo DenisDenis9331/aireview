@@ -1,8 +1,8 @@
 require 'tmpdir'
 require 'aireview/config_loader'
 
-# Граница загрузчика: слои в порядке приоритета и разбор env отдельно от
-# Config; полный набор сценариев загрузки — в config_spec через Config.load.
+# The loader boundary: layers in priority order and env parsing apart from
+# Config; the full set of loading scenarios is in config_spec through Config.load.
 RSpec.describe Aireview::ConfigLoader do
   it 'stacks built-in, image, file and env layers in that order' do
     Dir.mktmpdir do |dir|

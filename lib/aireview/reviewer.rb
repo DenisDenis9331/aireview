@@ -5,8 +5,9 @@ require_relative 'llm_router'
 require_relative 'llm_client'
 
 module Aireview
-  # Стадии ревью поверх роутера: generate и critique со своими схемами и
-  # температурами. Сам запрос делает LlmClient, обход моделей — LlmRouter.
+  # The review stages on top of the router: Generate and Critique with their
+  # own schemas and temperatures. LlmClient makes the request, LlmRouter
+  # walks the models.
   class Reviewer
     attr_reader :router
 
@@ -17,8 +18,8 @@ module Aireview
       @client = client || LlmClient.new(config: config, logger: logger)
     end
 
-    # pinned — запрос только к модели, ответившей в стадии последней
-    # (починка её же JSON): её отказ — RepairImpossibleError.
+    # pinned — a request only to the model that answered last in the stage
+    # (the repair of its own JSON): its failure is RepairImpossibleError.
     def generate(system_prompt:, user_prompt:, pinned: false)
       prompt = LlmClient::Prompt.new(stage: 'generate', system: system_prompt, user: user_prompt,
                                      temperature: @config.generate_temperature, schema: GenerateOutputSchema)
@@ -31,31 +32,31 @@ module Aireview
       call_llm(prompt, pinned: pinned)
     end
 
-    # Стадии, ответившие запасной моделью, для строки в отчёте.
+    # Stages answered by a fallback model, for the report line.
     def fallback_models
       @router.fallback_models
     end
 
-    # Модель, ответившая в стадии последней, с местом в цепочке — для лога.
+    # The model that answered last in the stage with its place in the chain, for the log.
     def answered_model(stage)
       @router.answered(stage)
     end
 
-    # Критика прошла на модели ниже generate по пулу (allow_weaker).
+    # Critique ran on a model below Generate in the pool (allow_weaker).
     def critique_weaker?
       @router.critique_weaker?
     end
 
-    # Негодный результат: модель исключается для стадии, следующий запрос
-    # стадии уйдёт другой. Возвращает исключённую модель или nil.
+    # An invalid result: the model is excluded for the stage, the next
+    # request of the stage goes to another. Returns the excluded model or nil.
     def exclude_answered_model(stage:, reason:)
       @router.exclude_answered(stage: stage, reason: reason)
     end
 
     private
 
-    # Отказ закреплённого маршрута — не ошибка API для пайплайна, а
-    # «починка невозможна»: та же участь, что у негодного результата.
+    # A pinned route giving up is not an API error for the pipeline but
+    # "repair impossible": the same fate as an invalid result.
     def call_llm(prompt, pinned:)
       response = @router.call(stage: prompt.stage, request_chars: prompt.chars, pinned: pinned) do |route, timeout|
         @client.request(prompt, candidate: route.candidate, key: route.key, key_index: route.key_index,

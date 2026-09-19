@@ -10,11 +10,12 @@ require_relative 'llm_client'
 require_relative 'output_schemas'
 
 module Aireview
-  # `aireview models check`: каждой модели из цепочек обеих стадий — по
-  # запросу с боевой схемой generate и critique на крошечном синтетическом
-  # MR. Ответ проходит ту же валидацию, что в прогоне: каталог провайдера
-  # не спрашиваем, «модель в списке» не значит «наш запрос со схемой на ней
-  # пройдёт». Без резервов, карантина и обхода — это проверка, а не ревью.
+  # `aireview models check`: every model of both stage chains gets one
+  # request with the production Generate schema and one with the Critique
+  # schema on a tiny synthetic MR. The answer goes through the same
+  # validation as in a run: the provider's catalog is not consulted, "the
+  # model is listed" does not mean "our request with the schema passes on
+  # it". No reserves, quarantine or walking — this is a check, not a review.
   class ModelChecker
     PROBE_MERGE_REQUEST = {
       'title' => 'Fix order total',
@@ -31,8 +32,8 @@ module Aireview
       }
     ].freeze
     PROBE_CANDIDATE_IDS = ['C1'].freeze
-    # ok и skipped не блокируют релиз, всё остальное — блокирует. В строгом
-    # режиме (раннер, где Ollama обязана быть) skipped — тоже провал.
+    # ok and skipped do not block a release, everything else does. In strict
+    # mode (a runner where Ollama must be running) skipped fails too.
     PASSING = %i[ok skipped].freeze
     STRICT_PASSING = %i[ok].freeze
 
@@ -44,7 +45,7 @@ module Aireview
       end
     end
 
-    # strict — skipped считается провалом (раннер, где Ollama обязана быть).
+    # strict — skipped counts as a failure (a runner where Ollama must be running).
     def initialize(config:, out:, strict: false, logger: Logger.new($stderr), **dependencies)
       @config = config
       @out = out
@@ -58,8 +59,8 @@ module Aireview
       @parser = ResultParser.new
     end
 
-    # Код выхода: 0 — все модели ответили по схеме (или пропущены), 1 —
-    # хотя бы одна нет.
+    # Exit code: 0 — every model answered by the schema (or was skipped),
+    # 1 — at least one did not.
     def run
       @config.require_llm_configuration!
       candidates = STAGES.flat_map { |stage| @config.stage_chain(stage) }.uniq(&:to_s)
@@ -91,8 +92,8 @@ module Aireview
       Result.new(candidate: candidate, stage: stage, status: failure_status(candidate, e), detail: e.message)
     end
 
-    # Минутный лимит — не повод считать модель сломанной: один повтор по
-    # подсказке провайдера, дальше «не удалось проверить».
+    # A per-minute limit is no reason to call the model broken: one retry
+    # after the provider's hint, then "could not verify".
     def probe_with_one_retry(candidate, stage, prompt)
       probe(candidate, stage, prompt)
     rescue StandardError => e
@@ -113,9 +114,9 @@ module Aireview
       @client.request(request, candidate: candidate, key: key, timeout: @config.llm_timeout.to_f).content
     end
 
-    # missing — модели нет у провайдера; unverified — провайдер не смог
-    # ответить сейчас (перегрузка, квота, таймаут); skipped — Ollama не
-    # запущена там, где идёт проверка; failed — всё остальное.
+    # missing — the provider has no such model; unverified — the provider
+    # could not answer right now (overload, quota, timeout); skipped — Ollama
+    # is not running where the check runs; failed — everything else.
     def failure_status(candidate, error)
       return :skipped if candidate.provider == 'ollama' && connection_failed?(error)
 

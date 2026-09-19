@@ -47,8 +47,9 @@ RSpec.describe Aireview::ModelChecker do
     allow(config).to receive(:provider_api_keys) { |provider| provider == 'ollama' ? [nil] : ['key-one'] }
   end
 
-  # Клиент отвечает по сценарию; проверяется, что чекер шлёт боевые
-  # промпты с боевыми схемами, первым ключом провайдера и таймаутом конфига.
+  # The client answers by a script; the check is that the checker sends the
+  # production prompts with the production schemas, the provider's first key
+  # and the config timeout.
   def stub_probe(answers)
     allow(client).to receive(:request) do |prompt, candidate:, key:, timeout:, key_index: 0|
       expect(key).to eq(candidate.provider == 'ollama' ? nil : 'key-one')
@@ -56,7 +57,7 @@ RSpec.describe Aireview::ModelChecker do
       expect(timeout).to eq(60.0)
       expect(prompt.temperature).to eq(0)
       expect(prompt.schema).to eq(prompt.stage == 'critique' ? Aireview::CritiqueOutputSchema : Aireview::GenerateOutputSchema)
-      expect(prompt.system).to include(prompt.stage == 'critique' ? 'критик' : 'ревью').or include('review')
+      expect(prompt.system).to include(prompt.stage == 'critique' ? 'second pass' : 'first pass')
       expect(prompt.user).to include('app/models/order.rb')
       answer = answers.fetch([candidate.model, prompt.stage]).shift
       raise answer if answer.is_a?(Exception)

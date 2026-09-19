@@ -2,8 +2,8 @@ require 'fileutils'
 require 'tmpdir'
 require 'aireview/config'
 
-# Граница Config → план маршрутизации: YAML/env/CLI превращаются в
-# StageChains или ModelPool; сами планы проверяются в своих спеках.
+# The Config → routing plan boundary: YAML/env/CLI turn into StageChains or
+# ModelPool; the plans themselves are checked in their own specs.
 RSpec.describe Aireview::Config, 'routing' do
   let(:pool_yaml) do
     <<~YAML
@@ -75,15 +75,15 @@ RSpec.describe Aireview::Config, 'routing' do
     config = Aireview::Config.load(cwd: @dir, env: {'GEMINI_API_KEY' => 'k'}, logger: Logger.new(log_output))
     pro, flash, flash_lite = config.routing.pool
 
-    # Старт ниже ответившей generate не обходит запрет слабой критики.
+    # A start below the model that answered in Generate does not bypass the ban on a weaker critique.
     expect(names(config.routing.critique_chain(after: flash))).to eq(%w[gemini/gemini-pro gemini/gemini-flash])
     expect(config.warnings).to include(
       'llm.critique.start gemini-flash-lite is below the model that answered in generate and allow_weaker is off, ignoring it'
     )
-    # Старт допустим — идёт первым.
+    # A permitted start goes first.
     expect(names(config.routing.critique_chain(after: flash_lite)))
       .to eq(%w[gemini/gemini-flash-lite gemini/gemini-pro gemini/gemini-flash])
-    # Старт выше generate — тоже первым, остальные по порядку пула.
+    # A start above Generate goes first too, the rest in pool order.
     File.write(File.join(@dir, '.aireview.yml'), "#{yaml}  critique:\n    start: gemini-flash\n")
     config = Aireview::Config.load(cwd: @dir, env: {'GEMINI_API_KEY' => 'k'}, logger: Logger.new(nil))
     expect(names(config.routing.critique_chain(after: flash_lite)))
@@ -122,17 +122,17 @@ RSpec.describe Aireview::Config, 'routing' do
     base = load_with(@dir, yaml: legacy)
     expect(names(base.stage_chain(:critique))).to eq(%w[gemini/legacy gemini/old-reserve])
 
-    # Модель из пула возвращает стадию в пул: своя model и fallbacks сбрасываются.
+    # A model from the pool brings the stage back into the pool: its own model and fallbacks are reset.
     config = base.with_overrides(critique_model: 'gemini-pro')
     expect(config.routing.pool_stage?('critique')).to be(true)
     expect(names(config.stage_chain(:critique)))
       .to eq(%w[gemini/gemini-pro gemini/gemini-flash gemini/gemini-flash-lite ollama/qwen2.5-coder:7b])
 
-    # Модель не из пула — одиночная цепочка, старые fallbacks не тянутся.
+    # A model outside the pool is a single chain, the old fallbacks do not carry over.
     config = base.with_overrides(critique_model: 'outside')
     expect(names(config.stage_chain(:critique))).to eq(%w[gemini/outside])
 
-    # Без пула — прежнее поведение: меняется только основная модель, запасные остаются.
+    # Without a pool the old behaviour: only the primary model changes, the reserves stay.
     plain = load_with(@dir, yaml: "llm:\n  generate:\n    model: g\n    fallbacks: [r]\n  critique:\n    model: c\n")
     expect(names(plain.with_overrides(generate_model: 'x').stage_chain(:generate))).to eq(%w[gemini/x gemini/r])
   end

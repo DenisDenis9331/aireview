@@ -44,8 +44,8 @@ module Aireview
 
     private
 
-    # aireview models check [--config PATH] [--verbose]: каждой модели из
-    # цепочек — по запросу с боевыми схемами; см. ModelChecker.
+    # aireview models check [--config PATH] [--verbose]: a probe request with
+    # the production schemas to every model of the chains; see ModelChecker.
     def run_models(argv)
       options = parse_models_options(argv)
       raise ParseError, "Usage: aireview models check [options] (got: #{argv.join(' ')})" unless argv == ['check']
@@ -134,8 +134,8 @@ module Aireview
       [merge_request, changes]
     end
 
-    # Дифф уходит дальше по файлам, а не одной строкой: бюджет контекста
-    # режет его по границам файлов и хунков.
+    # The diff travels on as files, not as one string: the context budget
+    # cuts it at file and hunk boundaries.
     def prepare_changes(changes, config)
       diff_fetcher = DiffFetcher.new(ignore_paths: config.ignore_paths, logger: @logger)
       filtered_changes = diff_fetcher.filter(changes)
@@ -172,8 +172,8 @@ module Aireview
         critique: !options[:no_critique]
       )
 
-      # Печатаем до публикации: если публикация не состоится, текст ревью
-      # останется хотя бы в логе джоба.
+      # Printed before publishing: if publishing fails, the review text at
+      # least stays in the job log.
       @out.puts(review)
 
       publish_review(review, context, publication) if publication
@@ -181,8 +181,8 @@ module Aireview
       0
     end
 
-    # Поиск прошлого ревью идёт до вызова LLM: иначе запросы тратятся впустую,
-    # даже когда публиковать нечего.
+    # The previous review is looked up before calling the LLM: otherwise the
+    # requests are wasted even when there is nothing to publish.
     def prepare_publication(pipeline, config, context, options)
       return nil unless options[:post]
 
@@ -236,10 +236,10 @@ module Aireview
       )
     end
 
-    # Пока работала LLM, MR мог уехать: новый коммит, перебазирование или смена
-    # целевой ветки. Публиковать ревью неактуального диффа хуже, чем не
-    # публиковать ничего, а ошибку проверки нельзя трактовать как «всё на
-    # месте», поэтому её не глушим.
+    # While the LLM was working the MR may have moved on: a new commit, a
+    # rebase or a target branch change. Publishing a review of a stale diff
+    # is worse than publishing nothing, and a failed check cannot be read as
+    # "all in place", so it is not swallowed.
     def merge_request_moved?(context)
       current = context[:gitlab_client].fetch_merge_request(
         context[:parser_result].project_id,

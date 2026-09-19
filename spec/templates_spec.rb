@@ -19,7 +19,7 @@ RSpec.describe 'templates/review.gitlab-ci.yml' do
   it 'passes every env variable the config reads into the container by name' do
     script = template.dig('aireview', 'script').join("\n")
     passed = script.scan(/-e ([A-Z_]+)(?=\s)/).flatten
-    # GITLAB_URL берётся из CI_SERVER_URL и передаётся со значением.
+    # GITLAB_URL comes from CI_SERVER_URL and is passed with a value.
     expected = Aireview::Config.env_names - ['GITLAB_URL']
 
     expect(passed).to include(*expected)

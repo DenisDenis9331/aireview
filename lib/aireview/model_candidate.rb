@@ -3,8 +3,8 @@
 module Aireview
   KNOWN_PROVIDERS = %w[gemini ollama].freeze
 
-  # Модель в цепочке стадии: провайдер, имя и предел размера запроса.
-  # Сравнивается по провайдеру и имени — предел зависит от стадии.
+  # A model in a stage chain: provider, name and request size limit.
+  # Compared by provider and name — the limit depends on the stage.
   ModelCandidate = Struct.new(:provider, :model, :max_prompt_chars, keyword_init: true) do
     def to_s
       "#{provider}/#{model}"
@@ -14,8 +14,8 @@ module Aireview
       to_s == other.to_s
     end
 
-    # Строка «провайдер/имя» или просто имя (провайдер отделён слэшем,
-    # потому что теги Ollama содержат двоеточие), либо хеш с model.
+    # A "provider/name" string or a bare name (the provider is separated by
+    # a slash because Ollama tags contain a colon), or a hash with model.
     def self.parse_item(item)
       return item unless item.is_a?(String)
 

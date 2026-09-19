@@ -2,16 +2,17 @@
 require 'set'
 
 module Aireview
-  # Что роутер узнал о модели за прогон. Три вещи с разным сроком жизни:
-  # отправленные запросы считаются на стадию, карантин действует до
-  # момента времени, исключение — до конца прогона (модели нет у
-  # провайдера, все ключи по квоте) или до конца стадии (негодный
-  # результат). Ключи с исчерпанной суточной квотой помнятся отдельно:
-  # квота — свойство «ключ + модель», карантин — свойство модели.
+  # What the router learned about a model during the run. Three things with
+  # different lifetimes: sent requests are counted per stage, a quarantine
+  # lasts until a moment in time, an exclusion lasts until the end of the
+  # run (the provider has no such model, every key is out of quota) or the
+  # end of the stage (an invalid result). Keys with an exhausted daily quota
+  # are remembered separately: a quota is a property of "key + model", a
+  # quarantine a property of the model.
   class ModelState
-    # Каждый отправленный запрос, включая короткий повтор и починку JSON,
-    # расходует попытку независимо от исхода; ключи модели делят один
-    # счётчик, карантин его не обнуляет.
+    # Every request sent, the short retry and the JSON repair included,
+    # spends an attempt regardless of its outcome; the keys of a model share
+    # one counter, a quarantine does not reset it.
     MAX_REQUESTS_PER_STAGE = 3
 
     attr_reader :excluded_reason
@@ -41,7 +42,7 @@ module Aireview
       @quarantined_until = until_time
     end
 
-    # Ответившая модель не перегружена, какой бы ключ ни ответил.
+    # A model that answered is not overloaded, whichever key answered.
     def lift_quarantine
       @quarantined_until = nil
     end
@@ -68,8 +69,8 @@ module Aireview
       @exhausted_keys.include?(key_index)
     end
 
-    # Почему модель нельзя пробовать в стадии; nil — можно (карантин
-    # проверяется отдельно: он не запрет, а ожидание).
+    # Why the model cannot be tried in the stage; nil — it can (the
+    # quarantine is checked separately: it is a wait, not a ban).
     def skip_reason(stage)
       return @excluded_reason if @excluded_reason
       return "excluded for this stage: #{@stage_exclusions[stage.to_s]}" if @stage_exclusions.key?(stage.to_s)

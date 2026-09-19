@@ -16,13 +16,13 @@ module Aireview
     }.freeze
     CHANGES_HEADER = "Changes:\n"
     CANDIDATES_HEADER = "\n\nCandidates JSON from Generate:\n"
-    # Резерв под кандидатов в промпте критика: три кандидата по ~1 500
-    # символов. Оценка, не гарантия; фактический размер проверяется перед
-    # отправкой.
+    # Room for the candidates in the Critique prompt: three candidates of
+    # ~1,500 characters. An estimate, not a guarantee; the actual size is
+    # checked before sending.
     CANDIDATES_RESERVE_CHARS = 4_500
 
-    # Контекст одного прогона: обе стадии получают одинаковые MR, Jira и дифф,
-    # усечённые один раз под самую тесную из стадий.
+    # The context of one run: both stages get the same MR, Jira and diff,
+    # truncated once for the tightest of the stages.
     Context = Struct.new(:user_prompt, :diff_text, :coverage, :sizes, keyword_init: true)
 
     def initialize(config:, logger: Logger.new($stderr))
@@ -72,9 +72,9 @@ module Aireview
       [template, *extras].join("\n\n")
     end
 
-    # Проверка перед отправкой: если кандидаты вышли за резерв и запрос не
-    # помещается, это ошибка, а не повод молча резать контекст, который
-    # генератор уже видел.
+    # A check before sending: when the candidates exceed the reserve and the
+    # request does not fit, that is an error, not a reason to silently cut
+    # the context Generate has already seen.
     def check_stage_size!(stage, system, user)
       stage = stage.to_s
       limit = @config.max_prompt_chars(stage)
@@ -90,8 +90,8 @@ module Aireview
 
     private
 
-    # Минимум по стадиям: контекст один на прогон, поэтому он должен
-    # помещаться в каждую из них вместе с её системным промптом и резервом.
+    # The minimum over the stages: the context is one per run, so it must fit
+    # into each of them together with its system prompt and reserve.
     def context_budget(critique:)
       stages = critique ? STAGES : ['generate']
       budgets = stages.to_h { |stage| [stage, stage_budget(stage)] }

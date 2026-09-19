@@ -11,10 +11,10 @@ require_relative 'config_limits'
 require_relative 'config'
 
 module Aireview
-  # Сборка Config из слоёв: встроенные значения, дефолты образа
-  # (AIREVIEW_DEFAULTS), .aireview.yml проекта (ищется вверх от cwd), env.
-  # Всё, что знает имена переменных окружения и формат файлов, живёт здесь;
-  # Config только отвечает на вопросы по уже слитым данным.
+  # Builds a Config from layers: built-in values, image defaults
+  # (AIREVIEW_DEFAULTS), the project's .aireview.yml (searched upwards from
+  # cwd), env. Everything that knows environment variable names and file
+  # formats lives here; Config only answers questions about merged data.
   module ConfigLoader
     ENV_MAPPING = {
       'gitlab_url' => 'GITLAB_URL',
@@ -59,9 +59,9 @@ module Aireview
       Config.new(config_path: File.file?(file_path) ? file_path : nil, logger: logger, layers: layers)
     end
 
-    # Все переменные окружения, которые читает загрузчик. CI-шаблон
-    # пробрасывает их в контейнер по имени: переменная проекта, которой нет
-    # в этом списке, до ревью не доедет.
+    # Every environment variable the loader reads. The CI template passes
+    # them into the container by name: a project variable missing from this
+    # list never reaches the review.
     def env_names
       stage_env = STAGES.flat_map do |stage|
         LLM_STAGE_ENV_SUFFIXES.map { |suffix| "LLM_#{stage.upcase}_#{suffix}" }
@@ -95,9 +95,9 @@ module Aireview
       File.join(cwd, basename)
     end
 
-    # Дефолты образа: путь задаёт Dockerfile через AIREVIEW_DEFAULTS.
-    # Заданный, но отсутствующий файл — сломанный образ, об этом лучше
-    # узнать сразу.
+    # Image defaults: the Dockerfile sets the path through AIREVIEW_DEFAULTS.
+    # A path that is set but missing means a broken image; better to learn
+    # that at once.
     def image_defaults_layer(env)
       path = env[IMAGE_DEFAULTS_ENV]
       return nil if Aireview::Utils.blank?(path)
@@ -155,8 +155,8 @@ module Aireview
       }.compact
     end
 
-    # LLM_GENERATE_FALLBACK_MODEL=gemini-3.8-flash (или список через запятую) —
-    # провайдер отделён слэшем, потому что теги Ollama содержат двоеточие.
+    # LLM_GENERATE_FALLBACK_MODEL=gemini-3.8-flash (or a comma-separated
+    # list) — the provider is separated by a slash because Ollama tags contain a colon.
     def fallback_models_env_config(env, stage)
       value = env["LLM_#{stage}_FALLBACK_MODEL"]
       return nil if Aireview::Utils.blank?(value)
@@ -165,7 +165,7 @@ module Aireview
     end
 
     # LLM_MODELS=gemini/gemini-3.8-flash,gemini/gemini-3.7-flash;
-    # LLM_GENERATE_START / LLM_CRITIQUE_START — модель из пула;
+    # LLM_GENERATE_START / LLM_CRITIQUE_START — a model from the pool;
     # LLM_CRITIQUE_RANK, LLM_CRITIQUE_ALLOW_WEAKER=true|false.
     def pool_env_config(env)
       models = env['LLM_MODELS'].to_s.split(',').map(&:strip).reject(&:empty?).map do |item|
@@ -219,8 +219,8 @@ module Aireview
       nil
     end
 
-    # Лимит, который не разобрался, нельзя молча заменять дефолтом: запрос
-    # уйдёт в модель с окном, которого у неё нет.
+    # A limit that failed to parse must not silently fall back to the
+    # default: the request would go to a model with a window it does not have.
     def parse_integer(value, name)
       return nil if Aireview::Utils.blank?(value)
 

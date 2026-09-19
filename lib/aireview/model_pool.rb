@@ -5,21 +5,23 @@ require_relative 'model_candidate'
 require_relative 'stage_chains'
 
 module Aireview
-  # План маршрутизации из общего пула: модели в порядке приоритета (первая —
-  # предпочтительная для критики). Generate обходит пул от стартовой модели
-  # вниз и по кругу; критика берёт первую живую модель не ниже той, что
-  # ответила в generate (rank: not_below_generate), самокритика той же
-  # моделью — последний допустимый вариант, ниже — только при allow_weaker.
-  # Стадия со своей model пулом не пользуется: у неё независимая цепочка, и
-  # правило ранга тогда не действует, как при rank: any.
+  # A routing plan from a shared pool: models in order of priority (the
+  # first is the preferred one for Critique). Generate walks the pool from
+  # its start model downwards and round again; Critique takes the first
+  # live model not below the one that answered in Generate
+  # (rank: not_below_generate), self-critique by the same model is the last
+  # permitted option, lower only with allow_weaker. A stage with a model of
+  # its own does not use the pool: its chain is independent and the rank
+  # rule does not apply, as with rank: any.
   class ModelPool
     CRITIQUE_RANKS = %w[not_below_generate any].freeze
     DEFAULT_CRITIQUE_RANK = 'not_below_generate'
 
     attr_reader :warnings
 
-    # Есть ли модель в сыром списке llm.models — без построения плана: так
-    # CLI-переопределение не спотыкается о невалидный старт старого плана.
+    # Whether a model is in the raw llm.models list — without building the
+    # plan, so that a CLI override does not trip over an invalid start of
+    # the old plan.
     def self.member?(items, provider, model)
       return false if Aireview::Utils.blank?(model)
 
@@ -43,12 +45,13 @@ module Aireview
       }
     end
 
-    # items — сырой llm.models; starts — старт по стадиям (имя модели или
-    # nil); inherited_starts — стадии, чей старт пришёл из слоя ниже пула
-    # (дефолты образа против LLM_MODELS проекта): такой старт, которого нет
-    # в пуле, заменяется первой моделью с предупреждением, явный старт не из
-    # пула — ошибка конфигурации; own_chains — стадии со своей цепочкой.
-    # Девять именованных настроек читаются лучше, чем структура ради структуры.
+    # items — the raw llm.models; starts — the start per stage (a model name
+    # or nil); inherited_starts — stages whose start came from a layer below
+    # the pool (image defaults versus the project's LLM_MODELS): such a start
+    # missing from the pool is replaced by the first model with a warning,
+    # an explicit start outside the pool is a configuration error;
+    # own_chains — stages with a chain of their own.
+    # Nine named settings read better than a struct for its own sake.
     def initialize(items:, provider:, limits:, starts: {}, inherited_starts: [], rank: nil, allow_weaker: false, # rubocop:disable Metrics/ParameterLists
                    own_chains: nil, only_primary: false)
       @items = parse_items(items, provider)
@@ -76,11 +79,12 @@ module Aireview
       trim(pool(stage).rotate(index_of(@starts[stage] || @items.first[:model])))
     end
 
-    # Модели не ниже ответившей generate по порядку пула (включая её саму),
-    # при allow_weaker — потом остальные. Явный старт критики идёт первым,
-    # только если сам допустим: generate идёт по кругу и может ответить
-    # моделью выше своего старта, статически это не проверить; недопустимый
-    # старт не обходит запрет слабой критики, а пропускается.
+    # The models not below the one that answered in Generate, in pool order
+    # (including that one), then — only with allow_weaker — the rest. An
+    # explicit critique start goes first only when it is permitted itself:
+    # Generate walks round the pool and may answer with a model above its
+    # own start, so this cannot be checked statically; a start that is not
+    # permitted does not bypass the ban on a weaker critique, it is skipped.
     def critique_chain(after:)
       return chain('critique') unless rank_applies?(after)
 
@@ -101,8 +105,8 @@ module Aireview
       index_of(critique_candidate) > index_of(generate_candidate)
     end
 
-    # Порядок и политика пула — в ключ ревью: от них зависит, какая модель
-    # проверяет замечания. nil, когда хотя бы одна стадия вне пула.
+    # The order and policy of the pool go into the review key: they decide
+    # which model checks the findings. nil when a stage is outside the pool.
     def signature
       return nil unless both_stages_in_pool?
 
@@ -115,7 +119,7 @@ module Aireview
       }
     end
 
-    # Правило выбора критики словами — для --dry-run.
+    # The critique selection rule in words, for --dry-run.
     def rule
       return nil unless both_stages_in_pool?
       return @rank if @rank == 'any' || !@allow_weaker
@@ -168,7 +172,7 @@ module Aireview
       [head, *chain.reject { |candidate| candidate.equal?(head) }]
     end
 
-    # Старт стадии со своей цепочкой не проверяется: стадия вне пула.
+    # The start of a stage with its own chain is not checked: it is outside the pool.
     def resolve_starts(starts, inherited)
       STAGES.to_h do |stage|
         start = starts[stage]
@@ -188,7 +192,7 @@ module Aireview
       raise ConfigError, "#{model} is not in llm.models: #{pool.join(', ')}"
     end
 
-    # Модель задаётся именем или «провайдер/имя»; кандидат — по провайдеру и имени.
+    # A model is given by name or as "provider/name"; a candidate matches by provider and name.
     def match?(item, model)
       return "#{item[:provider]}/#{item[:model]}" == model.to_s if model.is_a?(ModelCandidate)
 
