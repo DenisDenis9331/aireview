@@ -3,11 +3,12 @@ require 'logger'
 require 'set'
 
 module Aireview
-  # Механическая проверка привязки кандидата к коду по тому диффу, который
-  # реально ушёл в модель: файл, строка, цитата. Проверяется привязка, а не
-  # сам баг: ненайденная цитата — повод критику присмотреться, не
-  # доказательство выдумки. Файл, которого нет среди изменений MR, — другое
-  # дело: такого кандидата проверять нечем, он отбрасывается.
+  # A mechanical check that a candidate points at the code, against the diff
+  # the model actually saw: file, line, quote. The anchoring is checked, not
+  # the bug itself: a quote that is not found is a reason for Critique to
+  # look closer, not proof of a fabrication. A file that is not among the MR
+  # changes is a different matter: there is nothing to check such a
+  # candidate against, it is dropped.
   class CandidateChecker
     HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/
     FILE_HEADER = %r{^diff --git a/(.+?) b/(.+)$}
@@ -15,12 +16,12 @@ module Aireview
     NOTE_LINE_RESET = 'line was outside the shown hunks and has been reset to null'
     NOTE_NOT_VERIFIED = 'file shown partially or without a diff, location not verified'
 
-    # Один файл из контекста: диапазоны строк нового файла по показанным
-    # хункам и нормализованный текст каждого хунка для поиска цитаты —
-    # отдельно новая сторона (контекст + добавленные строки) и старая
-    # (контекст + удалённые), чтобы многострочная цитата из одной версии
-    # файла находилась целиком. Хунки не склеиваются: между ними пропущенный
-    # код, и цитата через границу хунка — не цитата.
+    # One file of the context: the new-file line ranges of the shown hunks
+    # and the normalized text of every hunk for the quote search — the new
+    # side (context + added lines) and the old side (context + removed
+    # lines) separately, so that a multi-line quote from one version of the
+    # file is found whole. Hunks are not glued together: there is skipped
+    # code between them, and a quote across a hunk boundary is not a quote.
     Section = Struct.new(:ranges, :hunks, :partial, keyword_init: true) do
       def include?(quote)
         hunks.any? { |hunk| hunk[:new_text].include?(quote) || hunk[:old_text].include?(quote) }
@@ -34,9 +35,9 @@ module Aireview
       @sections = parse_sections(diff_text.to_s)
     end
 
-    # Возвращает кандидатов с пометками: note для критика, quote_missing для
-    # отчёта, line сброшена в null, если не подтвердилась. Кандидаты с файлом
-    # не из MR отброшены.
+    # Returns the candidates with marks: a note for Critique, quote_missing
+    # for the report, line reset to null when it was not confirmed.
+    # Candidates with a file outside the MR are dropped.
     def check(candidates)
       candidates.filter_map do |candidate|
         id = value(candidate, 'id')
@@ -85,10 +86,10 @@ module Aireview
       NOTE_QUOTE_NOT_FOUND
     end
 
-    # Дифф уже собран под бюджет: у показанного частично файла хунков может
-    # не хватать, у файла без диффа хунков нет вовсе. Заголовки --- / +++
-    # бывают только между заголовком файла и первым @@; внутри хунка строка
-    # «+++ x» — это добавленный код «++ x».
+    # The diff is already packed to the budget: a partially shown file may
+    # lack hunks, a file without a diff has none at all. The --- / +++
+    # headers occur only between the file header and the first @@; inside a
+    # hunk a "+++ x" line is the added code "++ x".
     def parse_sections(diff_text)
       sections = {}
       section = nil
@@ -108,8 +109,8 @@ module Aireview
       normalize_hunks(sections)
     end
 
-    # Хунк без новых строк (удаление, @@ -1 +0,0 @@) диапазона не даёт:
-    # строки 0 в новом файле нет.
+    # A hunk without new lines (a deletion, @@ -1 +0,0 @@) gives no range:
+    # there is no line 0 in the new file.
     def start_hunk(section, header)
       start = header[1].to_i
       length = header[2] ? header[2].to_i : 1
@@ -142,8 +143,9 @@ module Aireview
       partial.each { |path| sections[path]&.partial = true }
     end
 
-    # Сначала точное совпадение: каталоги a/ и b/ бывают настоящими. Префикс
-    # из заголовка диффа снимается только если точного пути в MR нет.
+    # An exact match first: a/ and b/ directories can be real. The prefix
+    # from the diff header is stripped only when the exact path is not in
+    # the MR.
     def resolve_path(path)
       path = path.to_s.strip
       return path if @mr_paths.include?(path)

@@ -2,12 +2,13 @@
 require_relative 'errors'
 
 module Aireview
-  # Укладывает контекст ревью в бюджет символов и запоминает, что при этом не
-  # вошло. Секции MR и Jira режутся до своих лимитов с сохранением начала,
-  # дифф по целым файлам, затем по целым хункам; внутри хунка не режем.
+  # Fits the review context into a character budget and remembers what was
+  # left out. The MR and Jira sections are cut to their limits keeping the
+  # beginning, the diff by whole files, then by whole hunks; a hunk is never
+  # cut inside.
   module ContextBudget
-    # Пути, которые не вошли, перечисляются в конце диффа; список ограничен,
-    # чтобы сам не съел бюджет.
+    # The paths that did not fit are listed at the end of the diff; the list
+    # is capped so that it does not eat the budget itself.
     NOT_SHOWN_LIST_LIMIT = 20
     TRAILER_RESERVE_CHARS = 400
 
@@ -26,7 +27,8 @@ module Aireview
 
     Packed = Struct.new(:text, :shown_hunks, :total_hunks, keyword_init: true)
 
-    # Начало важнее конца: требования и критерии приёмки обычно там.
+    # The beginning matters more than the end: requirements and acceptance
+    # criteria usually live there.
     def self.truncate_section(text, limit:, label:, coverage:)
       text = text.to_s
       return text if text.length <= limit
@@ -39,11 +41,11 @@ module Aireview
       Packer.new(entries, budget: budget, coverage: coverage).pack
     end
 
-    # Файлы без хунков идут первыми: они дёшевы и всегда полезны для картины
-    # MR. Текстовые файлы идут в порядке GitLab, пока влезают; первый файл,
-    # который не влезает, показывается частично, всё после него не показывается.
-    # Хунк, который не влез бы даже в пустой бюджет, пропускается с пометкой,
-    # а не останавливает раскладку.
+    # Files without hunks go first: they are cheap and always useful for the
+    # picture of the MR. Text files go in GitLab order while they fit; the
+    # first file that does not fit is shown partially, everything after it is
+    # not shown. A hunk that would not fit even into an empty budget is
+    # skipped with a mark instead of stopping the layout.
     class Packer
       def initialize(entries, budget:, coverage:)
         @non_text, @text = entries.partition { |entry| !entry.text? }
@@ -62,9 +64,9 @@ module Aireview
 
       private
 
-      # Что-то придётся опустить, значит нужен хвост со списком пропущенного.
-      # @used считает весь собранный текст, включая разделители между
-      # файлами: результат не должен выйти за бюджет ни на символ.
+      # Something has to be left out, so a trailer listing the skipped paths
+      # is needed. @used counts the whole assembled text, separators between
+      # files included: the result must not exceed the budget by a character.
       def pack_within_limit
         @parts = @non_text.map(&:render)
         @used = joined_length(@parts)
@@ -95,12 +97,12 @@ module Aireview
         shown_hunks
       end
 
-      # Место под следующий кусок с учётом разделителя перед ним.
+      # Room for the next piece, the separator before it included.
       def remaining
         @limit - @used - (@parts.empty? ? 0 : 1)
       end
 
-      # Возвращает [текст, число показанных хунков, остановлена ли раскладка].
+      # Returns [text, number of shown hunks, whether the layout stopped].
       def pack_entry(entry)
         full = entry.render
         return [full, entry.hunks.size, false] if full.length <= remaining
@@ -113,10 +115,10 @@ module Aireview
         [entry.header + body + partial_marker(entry, shown), shown, stopped]
       end
 
-      # Место сначала отдаётся хункам, которые можно показать, и только на
-      # остаток добавляются пометки о слишком больших: иначе пометки могли бы
-      # вытеснить единственный подходящий хунк. Факт пропуска в покрытие
-      # попадает независимо от того, есть ли для пометки место.
+      # Room goes first to the hunks that can be shown, and only the remainder
+      # to the marks about oversized ones: otherwise the marks could push out
+      # the only fitting hunk. The skip is recorded in the coverage whether
+      # or not there is room for the mark.
       def pack_hunks(entry)
         base = entry.header.length + partial_marker(entry, 0).length
         shown = []

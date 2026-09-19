@@ -20,6 +20,13 @@ AsciiComments:
 ClassLength:
   Max: 300
 
+# The config loader is the one place that knows every environment variable
+# name and how values are parsed; splitting it into modules for the sake of a
+# line count would read worse than the whole.
+Metrics/ModuleLength:
+  Exclude:
+    - lib/aireview/config_loader.rb
+
 CollectionMethods:
   PreferredMethods:
     reduce: inject

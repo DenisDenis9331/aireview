@@ -1,0 +1,47 @@
+# Defaults baked into the aireview image. This layer sits between the
+# built-in values and the project's .aireview.yml: a project overrides
+# anything here, the environment and CLI flags override the project. No
+# keys live here.
+#
+# One shared pool of models (see README, "Shared model pool"): the order is
+# the priority for Critique, the first model is the preferred one. Generate
+# starts at generate.start and goes down the list and round again; Critique
+# takes the first live model not below the one that answered in Generate
+# and never goes lower.
+#
+# Every model carries an explicit provider: a model without one inherits
+# llm.provider, and a project that switched it to ollama would otherwise get
+# "Ollama models" with Gemini names.
+#
+# Model names come from the Gemini catalog (GET /v1beta/models), text models
+# without "preview" in the name only; each one is confirmed by
+# `aireview models check` with both schemas (2026-09-18).
+
+review_language: en
+
+llm:
+  provider: gemini
+  temperature: 0
+  # Three attempts per model × timeout is the ceiling for one hung model:
+  # 300 s meant 15 minutes, 180 s means 9.
+  timeout: 180
+  time_budget: 1800
+  overloaded_quarantine: 120
+  models:
+    - provider: gemini
+      model: gemini-3.8-flash
+    - provider: gemini
+      model: gemini-3.7-flash
+    - provider: gemini
+      model: gemini-3.6-flash
+    - provider: gemini
+      model: gemini-3.5-flash
+    - provider: gemini
+      model: gemini-3.5-flash-lite
+  generate:
+    start: gemini-3.7-flash
+    temperature: 0.1
+  critique:
+    rank: not_below_generate
+    allow_weaker: false
+    temperature: 0

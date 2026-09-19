@@ -1,8 +1,9 @@
 # frozen_string_literal: true
 require 'securerandom'
+require_relative 'model_checker'
 
 module Aireview
-  class CLI
+  class CLI # rubocop:disable Metrics/ClassLength
     def self.start(argv, out: $stdout, err: $stderr, env: ENV)
       new(argv, out: out, err: err, env: env).start
     end
@@ -24,6 +25,8 @@ module Aireview
       case command
       when 'review'
         run_review(@argv)
+      when 'models'
+        run_models(@argv)
       when '--help', '-h', nil
         @out.puts(help)
         0
@@ -40,6 +43,33 @@ module Aireview
     end
 
     private
+
+    # aireview models check [--config PATH] [--verbose]: a probe request with
+    # the production schemas to every model of the chains; see ModelChecker.
+    def run_models(argv)
+      options = parse_models_options(argv)
+      raise ParseError, "Usage: aireview models check [options] (got: #{argv.join(' ')})" unless argv == ['check']
+
+      @logger.level = Logger::DEBUG if options[:verbose]
+      config = Config.load(config_path: options[:config], cwd: Dir.pwd, env: @env, logger: @logger)
+      config.warnings.each { |warning| @logger.warn(warning) }
+      ModelChecker.new(config: config, out: @out, logger: @logger, strict: options[:strict] == true).run
+    end
+
+    def parse_models_options(argv)
+      options = {}
+      OptionParser.new do |parser|
+        parser.banner = 'Usage: aireview models check [options]'
+        parser.on('--config PATH', 'Path to .aireview.yml') { |value| options[:config] = value }
+        parser.on('--strict', 'Treat a skipped model (unreachable Ollama) as a failure') { options[:strict] = true }
+        parser.on('--verbose', 'Enable debug logging') { options[:verbose] = true }
+        parser.on('-h', '--help', 'Show help') do
+          @out.puts(parser)
+          raise Aireview::HelpRequested
+        end
+      end.parse!(argv)
+      options
+    end
 
     def run_review(argv)
       options, mr_url = review_options_and_url(argv)
@@ -72,6 +102,7 @@ module Aireview
         no_fallbacks: options[:no_fallbacks] == true
       )
       config.require_llm_configuration!
+      config.warnings.each { |warning| @logger.warn(warning) }
       config
     end
 
@@ -103,8 +134,8 @@ module Aireview
       [merge_request, changes]
     end
 
-    # Дифф уходит дальше по файлам, а не одной строкой: бюджет контекста
-    # режет его по границам файлов и хунков.
+    # The diff travels on as files, not as one string: the context budget
+    # cuts it at file and hunk boundaries.
     def prepare_changes(changes, config)
       diff_fetcher = DiffFetcher.new(ignore_paths: config.ignore_paths, logger: @logger)
       filtered_changes = diff_fetcher.filter(changes)
@@ -141,8 +172,8 @@ module Aireview
         critique: !options[:no_critique]
       )
 
-      # Печатаем до публикации: если публикация не состоится, текст ревью
-      # останется хотя бы в логе джоба.
+      # Printed before publishing: if publishing fails, the review text at
+      # least stays in the job log.
       @out.puts(review)
 
       publish_review(review, context, publication) if publication
@@ -150,8 +181,8 @@ module Aireview
       0
     end
 
-    # Поиск прошлого ревью идёт до вызова LLM: иначе запросы тратятся впустую,
-    # даже когда публиковать нечего.
+    # The previous review is looked up before calling the LLM: otherwise the
+    # requests are wasted even when there is nothing to publish.
     def prepare_publication(pipeline, config, context, options)
       return nil unless options[:post]
 
@@ -205,10 +236,10 @@ module Aireview
       )
     end
 
-    # Пока работала LLM, MR мог уехать: новый коммит, перебазирование или смена
-    # целевой ветки. Публиковать ревью неактуального диффа хуже, чем не
-    # публиковать ничего, а ошибку проверки нельзя трактовать как «всё на
-    # месте», поэтому её не глушим.
+    # While the LLM was working the MR may have moved on: a new commit, a
+    # rebase or a target branch change. Publishing a review of a stale diff
+    # is worse than publishing nothing, and a failed check cannot be read as
+    # "all in place", so it is not swallowed.
     def merge_request_moved?(context)
       current = context[:gitlab_client].fetch_merge_request(
         context[:parser_result].project_id,
@@ -333,9 +364,12 @@ module Aireview
       <<~HELP
         Usage:
           aireview review <merge_request_url> [options]
+          aireview models check [--config PATH] [--strict] [--verbose]
 
         Commands:
-          review    Run review for a GitLab merge request URL
+          review        Run review for a GitLab merge request URL
+          models check  Send a probe request with the generate and critique schemas
+                        to every model of both stages; exit 1 if any fails
 
         Options:
           --post           Post review as a merge request note

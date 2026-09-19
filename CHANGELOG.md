@@ -1,5 +1,51 @@
 # Changelog
 
+## 2.0.0
+
+Breaking: the review key of a shared pool includes the pool order and the
+critique policy; a single chain without reserves gets three requests instead
+of a seventeen-minute schedule; `LLM_PROVIDER` no longer re-targets models
+that carry an explicit provider.
+
+- Defaults shipped in the image: `config/defaults.yml` is a configuration
+  layer between the built-in values and the project's `.aireview.yml`,
+  enabled by `AIREVIEW_DEFAULTS` (set in the Dockerfile). A project needs no
+  model names; `--dry-run` prints the layer every setting came from and
+  warns when inherited reserves silently change provider.
+- Shared model pool: `llm.models` (`LLM_MODELS`) in order of priority,
+  `generate.start`, `critique.rank: not_below_generate|any` and
+  `critique.allow_weaker`. Generate walks the pool round from its start;
+  Critique takes the first live model not below the one that answered in
+  Generate, never weaker unless allowed. A stage with a `model` of its own
+  keeps an independent chain.
+- Router: an overloaded model or a timeout gets one short retry, then a
+  quarantine (`llm.overloaded_quarantine`, `LLM_OVERLOADED_QUARANTINE`,
+  120 s) and the next model; the walk goes round the pool once every model
+  has been tried, waiting for the nearest quarantine to end. Three requests
+  per model per stage, counted across keys and including the JSON repair;
+  the last model has no special schedule. A model the provider does not
+  have (retired, a typo, not pulled into Ollama) is excluded for the run
+  instead of failing it; a bare 404 stays fatal.
+- An invalid result that the same model cannot repair excludes that model
+  for the stage and restarts the stage on the next model with the original
+  request; Critique keeps the candidates already obtained.
+- `aireview models check`: two probe requests per model with the production
+  schemas and validation, statuses `ok / missing / invalid / unverified /
+  failed / skipped`, `--strict` turns a skipped (unreachable) Ollama into a
+  failure. Meant for release pipelines and schedules.
+- `templates/review.gitlab-ci.yml`: a job template projects include with
+  `ref: stable`; every config variable is passed into the container by name.
+- The log names the model that answered each stage and its place in the
+  chain; the report notes a critique that ran on a weaker model.
+- Fixed: with `json` 3.0 every provider answer failed to parse
+  (`Faraday::ParsingError`, "wrong number of arguments") — `faraday` 2.14.4
+  in the lockfile. The suite did not catch it because it stubs the network;
+  `aireview models check` did.
+- Internals: routing plans (`StageChains`, `ModelPool`) and the router's
+  `ModelState` are objects, `ConfigLoader` owns loading and env parsing,
+  `ResultParser` parses LLM results, `LlmClient` makes one request while
+  the router retries. Specs run against the real RubyLLM classes.
+
 ## 0.3.0
 
 - Fallback models per stage (`llm.<stage>.fallbacks`,

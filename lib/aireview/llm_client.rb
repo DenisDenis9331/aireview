@@ -1,0 +1,113 @@
+# frozen_string_literal: true
+require 'timeout'
+require_relative 'errors'
+require_relative 'utils'
+
+module Aireview
+  # One request to one model with one key through RubyLLM. Retries, keys and
+  # reserves belong to LlmRouter: the built-in RubyLLM/Faraday retries (3 by
+  # default) are off, otherwise every router attempt would turn into four
+  # HTTP requests and burn quota before the error reaches the classifier.
+  class LlmClient
+    # What a stage sends to the model; the same for every route of the stage.
+    Prompt = Struct.new(:stage, :system, :user, :temperature, :schema, keyword_init: true) do
+      def chars
+        system.length + user.length
+      end
+    end
+
+    def initialize(config:, logger: Logger.new($stderr))
+      @config = config
+      @logger = logger
+      @contexts = {}
+    end
+
+    # Returns the RubyLLM answer (content is text or a structure by the
+    # schema). A request error is re-raised as is — LlmFailure classifies it.
+    def request(prompt, candidate:, key:, timeout:, key_index: 0)
+      load_ruby_llm
+      stage = prompt.stage.to_s
+      model = candidate.model
+      @logger.info("LLM #{stage} request started (model=#{model}, temperature=#{prompt.temperature})")
+      chat = build_chat(context: context(stage, candidate.provider, key, key_index), stage: stage,
+                        model: model, provider: candidate.provider)
+      chat = configure_reasoning(chat: chat, model: model, provider: candidate.provider)
+        .with_temperature(prompt.temperature.to_f)
+        .with_schema(prompt.schema)
+      chat.with_instructions(prompt.system)
+      response = Timeout.timeout(timeout) { chat.ask(prompt.user) }
+      @logger.info("LLM #{stage} request completed (model=#{model})")
+      response
+    rescue Timeout::Error
+      @logger.warn("LLM #{stage} request timed out after #{timeout.round} seconds (model=#{model})")
+      raise
+    end
+
+    private
+
+    def load_ruby_llm
+      require 'ruby_llm'
+    rescue LoadError => e
+      @logger.error("LLM setup failed: #{e.message}")
+      raise ConfigError, "Missing dependency: #{e.message}"
+    end
+
+    def configure_reasoning(chat:, model:, provider:)
+      return chat unless provider == 'ollama' && model.start_with?('gpt-oss:')
+
+      chat.with_thinking(effort: :low)
+    end
+
+    def build_chat(context:, stage:, model:, provider:)
+      context.chat(model: model, provider: provider.to_sym)
+    rescue RubyLLM::ModelNotFoundError
+      @logger.warn(
+        "LLM #{stage}: model not found in RubyLLM registry; " \
+        "using fallback with incomplete model metadata " \
+        "(model=#{model}, provider=#{provider})"
+      )
+      context.chat(model: model, provider: provider.to_sym, assume_model_exists: true)
+    end
+
+    # A RubyLLM context per stage, provider and key index: switching the key
+    # is another context, not an edit of the global config.
+    def context(stage, provider, key, key_index)
+      @contexts[[stage, provider, key_index]] ||= build_context(provider.to_s, key)
+    end
+
+    def build_context(provider, api_key)
+      RubyLLM.context do |ruby_config|
+        configure_http_proxy(ruby_config)
+        ruby_config.request_timeout = @config.llm_timeout.to_f
+        ruby_config.max_retries = 0
+        configure_provider(ruby_config, provider, api_key)
+      end
+    end
+
+    def configure_http_proxy(ruby_config)
+      return unless Aireview::Utils.present?(@config.llm_http_proxy)
+
+      ruby_config.http_proxy = @config.llm_http_proxy
+    end
+
+    def configure_provider(ruby_config, provider, api_key)
+      case provider
+      when 'gemini', 'openai', 'openrouter'
+        configure_remote_provider(ruby_config, provider, api_key)
+      when 'anthropic'
+        ruby_config.anthropic_api_key = api_key
+      when 'ollama'
+        ruby_config.ollama_api_base = @config.ollama_api_base
+      else
+        raise ConfigError, "Unsupported LLM provider: #{provider.inspect}"
+      end
+    end
+
+    def configure_remote_provider(ruby_config, provider, api_key)
+      ruby_config.public_send("#{provider}_api_key=", api_key)
+      return unless Aireview::Utils.present?(@config.llm_api_base)
+
+      ruby_config.public_send("#{provider}_api_base=", @config.llm_api_base)
+    end
+  end
+end

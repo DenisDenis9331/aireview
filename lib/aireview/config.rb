@@ -6,13 +6,17 @@ require_relative 'errors'
 require_relative 'utils'
 require_relative 'config_limits'
 require_relative 'config_fallbacks'
+require_relative 'config_layers'
+require_relative 'config_loader'
 
 module Aireview
+  # Answers questions about the merged settings: values, their source
+  # (layer), the routing plan, provider keys. How settings are read from
+  # files and the environment is ConfigLoader's business.
   class Config
     include ConfigLimits
     include ConfigFallbacks
-    extend ConfigLimits::ClassMethods
-    extend ConfigFallbacks::ClassMethods
+    include ConfigLayers
 
     DEFAULT_SECRET_FILES = [
       '.env',
@@ -43,159 +47,35 @@ module Aireview
         'temperature' => 0,
         'timeout' => 60,
         'max_prompt_chars' => ConfigLimits::DEFAULT_MAX_PROMPT_CHARS,
-        'time_budget' => ConfigFallbacks::DEFAULT_TIME_BUDGET
+        'time_budget' => ConfigFallbacks::DEFAULT_TIME_BUDGET,
+        'overloaded_quarantine' => ConfigFallbacks::DEFAULT_OVERLOADED_QUARANTINE
       },
       'context' => ConfigLimits::CONTEXT_DEFAULTS
     }.freeze
 
-    ENV_MAPPING = {
-      'gitlab_url' => 'GITLAB_URL',
-      'gitlab_token' => 'GITLAB_TOKEN',
-      'jira_url' => 'JIRA_URL',
-      'jira_login' => 'JIRA_LOGIN',
-      'jira_password' => 'JIRA_PASSWORD',
-      'review_language' => 'REVIEW_LANGUAGE',
-      'review_mode' => 'REVIEW_MODE',
-      'llm_api_base' => 'LLM_API_BASE',
-      'ollama_api_base' => 'OLLAMA_API_BASE',
-      'llm_http_proxy' => 'LLM_HTTP_PROXY'
-    }.freeze
+    attr_reader :config_path, :layers
 
-    PROVIDER_KEY_MAPPING = {
-      'gemini' => 'GEMINI_API_KEY',
-      'ollama' => nil
-    }.freeze
-
-    attr_reader :config_path
-
-    def self.load(config_path: nil, cwd: Dir.pwd, env: ENV, logger: Logger.new($stderr))
-      load_dotenv(cwd)
-
-      file_path = config_path ? File.expand_path(config_path, cwd) : discover_file(cwd, '.aireview.yml')
-      file_config = File.file?(file_path) ? normalize_hash(YAML.load_file(file_path) || {}) : {}
-
-      merged = deep_merge(DEFAULTS, file_config)
-      merged = deep_merge(merged, env_config(env))
-
-      new(merged, config_path: File.file?(file_path) ? file_path : nil, logger: logger)
+    def self.load(**options)
+      ConfigLoader.load(**options)
     end
 
-    def self.load_dotenv(cwd)
-      require 'dotenv'
-      dotenv_path = discover_file(cwd, '.env')
-      Dotenv.load(dotenv_path) if File.file?(dotenv_path)
-    rescue LoadError
-      nil
+    def self.env_names
+      ConfigLoader.env_names
     end
 
-    def self.discover_file(cwd, basename)
-      current = Pathname.new(cwd).expand_path
-
-      loop do
-        candidate = current.join(basename)
-        return candidate.to_s if candidate.file?
-
-        break if current.root?
-
-        current = current.parent
-      end
-
-      File.join(cwd, basename)
-    end
-
-    def self.env_config(env)
-      mapped_env_config(env)
-        .merge('llm' => llm_env_config(env))
-        .merge(context_env_config(env))
-        .merge(provider_key_env_config(env))
-        .merge(provider_keys_env_config(env))
-        .merge(generic_api_key_env_config(env))
-    end
-
-    def self.mapped_env_config(env)
-      ENV_MAPPING.each_with_object({}) do |(key, env_key), config|
-        value = env[env_key]
-        config[key] = value unless Aireview::Utils.blank?(value)
-      end
-    end
-
-    def self.llm_env_config(env)
-      {
-        'provider' => env['LLM_PROVIDER'],
-        'temperature' => parse_float(env['LLM_TEMPERATURE']),
-        'timeout' => parse_float(env['LLM_TIMEOUT']),
-        'max_prompt_chars' => parse_integer(env['LLM_MAX_PROMPT_CHARS'], 'LLM_MAX_PROMPT_CHARS'),
-        'time_budget' => parse_integer(env['LLM_TIME_BUDGET'], 'LLM_TIME_BUDGET'),
-        'generate' => llm_stage_env_config(env, 'GENERATE'),
-        'critique' => llm_stage_env_config(env, 'CRITIQUE')
-      }.compact.reject { |key, value| %w[generate critique].include?(key) && value.empty? }
-    end
-
-    def self.llm_stage_env_config(env, stage)
-      {
-        'provider' => env["LLM_#{stage}_PROVIDER"],
-        'model' => env["LLM_#{stage}_MODEL"],
-        'temperature' => parse_float(env["LLM_#{stage}_TEMPERATURE"]),
-        'max_prompt_chars' => parse_integer(env["LLM_#{stage}_MAX_PROMPT_CHARS"], "LLM_#{stage}_MAX_PROMPT_CHARS"),
-        'fallbacks' => fallback_models_env_config(env, stage)
-      }.compact
-    end
-
-    def self.provider_key_env_config(env)
-      PROVIDER_KEY_MAPPING.each_with_object({}) do |(provider, env_key), config|
-        next unless env_key
-
-        value = env[env_key]
-        config["#{provider}_api_key"] = value unless Aireview::Utils.blank?(value)
-      end
-    end
-
-    def self.generic_api_key_env_config(env)
-      api_key = env['LLM_API_KEY']
-      return {} if Aireview::Utils.blank?(api_key)
-
-      {'llm_api_key' => api_key}
-    end
-
-    def self.parse_float(value)
-      return nil if Aireview::Utils.blank?(value)
-
-      Float(value)
-    rescue ArgumentError
-      nil
-    end
-
-    def self.deep_merge(left, right)
-      left.merge(right) do |_, old_value, new_value|
-        if old_value.is_a?(Hash) && new_value.is_a?(Hash)
-          deep_merge(old_value, new_value)
-        else
-          new_value
-        end
-      end
-    end
-
-    def self.normalize_hash(value)
-      case value
-      when Hash
-        value.each_with_object({}) do |(key, inner_value), result|
-          result[key.to_s] = normalize_hash(inner_value)
-        end
-      when Array
-        value.map { |item| normalize_hash(item) }
-      else
-        value
-      end
-    end
-
-    def initialize(data, config_path:, logger:)
-      @data = self.class.normalize_hash(data)
+    # The layers are the single source of truth: the merged data is computed
+    # from them. A config built from a hash (without ConfigLoader) is one
+    # layer, otherwise the CLI layer from with_overrides would be the only
+    # one and the stage settings of the original hash would be lost.
+    def initialize(data = nil, config_path: nil, logger: Logger.new($stderr), layers: nil)
+      @layers = layers || [ConfigLayers::Layer.new(name: ConfigLayers::DATA_LAYER, data: Utils.normalize_hash(data))]
+      @data = @layers.map(&:data).reduce({}) { |merged, layer_data| Utils.deep_merge(merged, layer_data) }
       @config_path = config_path
       @logger = logger
     end
 
-    # Переопределения из CLI меняют только основную модель стадии, запасные
-    # из конфига остаются; no_fallbacks оставляет одну модель и один ключ.
+    # CLI overrides change only the primary model of a stage, the reserves
+    # from the config stay; no_fallbacks leaves one model and one key.
     def with_overrides(
       generate_model: nil,
       critique_model: nil,
@@ -212,7 +92,11 @@ module Aireview
       overrides['fallbacks_disabled'] = true if no_fallbacks
       return self if overrides.empty?
 
-      self.class.new(self.class.deep_merge(@data, overrides), config_path: config_path, logger: @logger)
+      self.class.new(
+        config_path: config_path,
+        logger: @logger,
+        layers: @layers + [ConfigLayers::Layer.new(name: ConfigLayers::CLI_LAYER, data: overrides)]
+      )
     end
 
     def gitlab_url
@@ -247,28 +131,42 @@ module Aireview
       dig('llm', 'timeout') || DEFAULTS.dig('llm', 'timeout')
     end
 
+    # The primary model of a stage is the first in its chain: the start for
+    # Generate, the first of the pool for Critique. These go into the review key.
     def generate_model
-      dig('llm', 'generate', 'model')
+      routing.primary('generate').model
     end
 
     def critique_model
-      dig('llm', 'critique', 'model')
+      routing.primary('critique').model
     end
 
     def generate_provider
-      dig('llm', 'generate', 'provider') || llm_provider
+      routing.primary('generate').provider
+    end
+
+    # Everything besides the prompt that affects the review result goes into
+    # the note key (see ReviewMarker): provider, model and temperature of the
+    # stages, the shared pool with its critique policy. Reserves of per-stage
+    # chains do not change the result.
+    def result_signature
+      {
+        'generate' => [generate_provider, generate_model, generate_temperature],
+        'critique' => [critique_provider, critique_model, critique_temperature],
+        'pool' => routing.signature
+      }
     end
 
     def critique_provider
-      dig('llm', 'critique', 'provider') || llm_provider
+      routing.primary('critique').provider
     end
 
     def generate_temperature
-      dig('llm', 'generate', 'temperature') || llm_temperature
+      stage_setting('generate', 'temperature') || DEFAULTS.dig('llm', 'temperature')
     end
 
     def critique_temperature
-      dig('llm', 'critique', 'temperature') || llm_temperature
+      stage_setting('critique', 'temperature') || DEFAULTS.dig('llm', 'temperature')
     end
 
     def llm_api_base
@@ -287,8 +185,8 @@ module Aireview
       @data['review_language'] || DEFAULTS['review_language']
     end
 
-    # update — обновляем свою заметку, когда дифф или настройки изменились,
-    # once — ревьюим один раз автоматически; Retry джоба обновляет ревью при изменениях.
+    # update — our note is updated when the diff or the settings changed,
+    # once — one automatic review; a job Retry updates the review on changes.
     def review_mode
       mode = (@data['review_mode'] || DEFAULTS['review_mode']).to_s
       return mode if REVIEW_MODES.include?(mode)
@@ -333,42 +231,29 @@ module Aireview
       raise ConfigError, 'GITLAB_TOKEN is required'
     end
 
-    def require_models!
-      missing = []
-      missing << 'llm.generate.model (or LLM_GENERATE_MODEL)' if Aireview::Utils.blank?(generate_model)
-      missing << 'llm.critique.model (or LLM_CRITIQUE_MODEL)' if Aireview::Utils.blank?(critique_model)
-      raise ConfigError, "LLM models are required: #{missing.join(', ')}" unless missing.empty?
-    end
-
-    def require_llm_configuration!
-      require_models!
-
-      missing_keys = ConfigLimits::LLM_STAGES.flat_map do |stage|
-        providers = stage_chain(stage).map(&:provider).uniq.reject { |provider| provider_keys_present?(provider) }
-        providers.map { |provider| "#{stage}: API key is required for provider #{provider.inspect}" }
-      end
-      raise ConfigError, missing_keys.join(', ') unless missing_keys.empty?
-    end
-
     private
 
-    def provider_keys_present?(provider)
-      return true if ConfigFallbacks::KEYLESS_PROVIDERS.include?(provider.to_s)
-
-      provider_api_keys(provider).any? { |key| Aireview::Utils.present?(key) }
-    end
-
+    # Without a pool an override changes only the primary model of the stage,
+    # the reserves stay. With a pool the stage mode switches explicitly: a
+    # model from the pool becomes the start and the stage's own model and
+    # fallbacks are reset; a model outside the pool is a single chain, start
+    # and fallbacks are reset.
     def stage_overrides(model:, temperature:)
-      {
-        'model' => model,
-        'temperature' => temperature
-      }.compact
+      overrides = {'temperature' => temperature}.compact
+      return overrides unless model
+
+      items = Array(dig('llm', 'models'))
+      return overrides.merge('model' => model) if items.empty?
+
+      if ModelPool.member?(items, llm_provider, model)
+        overrides.merge('start' => model, 'model' => nil, 'fallbacks' => nil)
+      else
+        overrides.merge('start' => nil, 'model' => model, 'fallbacks' => [])
+      end
     end
 
     def dig(*keys)
-      keys.reduce(@data) do |accumulator, key|
-        accumulator.is_a?(Hash) ? accumulator[key] : nil
-      end
+      Utils.dig(@data, *keys)
     end
   end
 end

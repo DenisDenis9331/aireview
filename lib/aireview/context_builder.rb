@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 require_relative 'utils'
 require_relative 'errors'
+require_relative 'stages'
 require_relative 'secret_scrubber'
 require_relative 'diff_fetcher'
 require_relative 'context_budget'
@@ -15,14 +16,13 @@ module Aireview
     }.freeze
     CHANGES_HEADER = "Changes:\n"
     CANDIDATES_HEADER = "\n\nCandidates JSON from Generate:\n"
-    # Резерв под кандидатов в промпте критика: три кандидата по ~1 500
-    # символов. Оценка, не гарантия; фактический размер проверяется перед
-    # отправкой.
+    # Room for the candidates in the Critique prompt: three candidates of
+    # ~1,500 characters. An estimate, not a guarantee; the actual size is
+    # checked before sending.
     CANDIDATES_RESERVE_CHARS = 4_500
-    STAGES = %i[generate critique].freeze
 
-    # Контекст одного прогона: обе стадии получают одинаковые MR, Jira и дифф,
-    # усечённые один раз под самую тесную из стадий.
+    # The context of one run: both stages get the same MR, Jira and diff,
+    # truncated once for the tightest of the stages.
     Context = Struct.new(:user_prompt, :diff_text, :coverage, :sizes, keyword_init: true)
 
     def initialize(config:, logger: Logger.new($stderr))
@@ -53,16 +53,16 @@ module Aireview
     end
 
     def build_generate_prompt(context)
-      check_stage_size!(:generate, system_prompt(:generate), context.user_prompt)
+      check_stage_size!('generate', system_prompt('generate'), context.user_prompt)
     end
 
     def build_critique_prompt(context, candidates_json:)
       user = "#{context.user_prompt}#{CANDIDATES_HEADER}#{scrub_text(candidates_json)}"
-      check_stage_size!(:critique, system_prompt(:critique), user)
+      check_stage_size!('critique', system_prompt('critique'), user)
     end
 
     def system_prompt(stage)
-      template = stage.to_sym == :critique ? CRITIQUE_PROMPT_TEMPLATE : GENERATE_PROMPT_TEMPLATE
+      template = stage.to_s == 'critique' ? CRITIQUE_PROMPT_TEMPLATE : GENERATE_PROMPT_TEMPLATE
       extras = []
       if Aireview::Utils.present?(@config.review_instructions)
         extras << "Additional project instructions:\n#{scrub_text(@config.review_instructions.strip)}"
@@ -72,10 +72,11 @@ module Aireview
       [template, *extras].join("\n\n")
     end
 
-    # Проверка перед отправкой: если кандидаты вышли за резерв и запрос не
-    # помещается, это ошибка, а не повод молча резать контекст, который
-    # генератор уже видел.
+    # A check before sending: when the candidates exceed the reserve and the
+    # request does not fit, that is an error, not a reason to silently cut
+    # the context Generate has already seen.
     def check_stage_size!(stage, system, user)
+      stage = stage.to_s
       limit = @config.max_prompt_chars(stage)
       total = system.length + user.length
       if total > limit
@@ -89,10 +90,10 @@ module Aireview
 
     private
 
-    # Минимум по стадиям: контекст один на прогон, поэтому он должен
-    # помещаться в каждую из них вместе с её системным промптом и резервом.
+    # The minimum over the stages: the context is one per run, so it must fit
+    # into each of them together with its system prompt and reserve.
     def context_budget(critique:)
-      stages = critique ? STAGES : [:generate]
+      stages = critique ? STAGES : ['generate']
       budgets = stages.to_h { |stage| [stage, stage_budget(stage)] }
       stage, budget = budgets.min_by { |_, value| value }
       return budget if budget.positive?
@@ -104,7 +105,7 @@ module Aireview
     end
 
     def stage_budget(stage)
-      reserve = stage == :critique ? CANDIDATES_RESERVE_CHARS + CANDIDATES_HEADER.length : 0
+      reserve = stage == 'critique' ? CANDIDATES_RESERVE_CHARS + CANDIDATES_HEADER.length : 0
       @config.max_prompt_chars(stage) - system_prompt(stage).length - reserve
     end
 
@@ -152,7 +153,7 @@ module Aireview
     end
 
     def context_sizes(fixed:, packed:, budget:, diff_budget:, critique:)
-      stages = critique ? STAGES : [:generate]
+      stages = critique ? STAGES : ['generate']
       {
         context_budget: budget,
         diff_budget: diff_budget,

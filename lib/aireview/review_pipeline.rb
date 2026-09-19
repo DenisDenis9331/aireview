@@ -1,18 +1,21 @@
 # frozen_string_literal: true
 require 'json'
 require_relative 'errors'
+require_relative 'stages'
 require_relative 'context_builder'
 require_relative 'candidate_checker'
-require_relative 'result_validation'
+require_relative 'result_parser'
 require_relative 'review_renderer'
 require_relative 'review_schemas'
 require_relative 'reviewer'
 
 module Aireview
+  # A review run: context → Generate → anchoring check against the diff →
+  # Critique → report. Invalid JSON is repaired once by the same model; when
+  # the repair is invalid too, the stage restarts on another model with the
+  # original request.
   class ReviewPipeline
-    include ResultValidation
-
-    SchemaError = ResultValidation::SchemaError
+    SchemaError = ResultParser::SchemaError
 
     REPAIR_SYSTEM_PROMPT = <<~PROMPT.strip.freeze
       You fix invalid JSON produced by another LLM call.
@@ -26,6 +29,7 @@ module Aireview
 
     def initialize(config:, reviewer: nil, context_builder: nil, logger: Logger.new($stderr))
       @config = config
+      @parser = ResultParser.new
       @reviewer = reviewer || Reviewer.new(config: config, logger: logger)
       @context_builder = context_builder || ContextBuilder.new(config: config, logger: logger)
       @logger = logger
@@ -40,16 +44,18 @@ module Aireview
       )
       generate_prompt = @context_builder.build_generate_prompt(context)
       @logger.info("Pipeline generate pass started (model=#{@config.generate_model})")
-      candidates_raw = @reviewer.generate(**generate_prompt)
-      generate_result = parse_with_repair(
-        raw: candidates_raw,
-        kind: 'generate result',
-        expected: :generate,
-        repair_stage: :generate
-      )
+      generate_result = run_stage('generate') do
+        parse_with_repair(
+          raw: @reviewer.generate(**generate_prompt),
+          kind: 'generate result',
+          expected: 'generate',
+          repair_stage: 'generate'
+        )
+      end
       summary = generate_result['summary']
       candidates = Array(generate_result['candidates'])
-      @logger.info("Pipeline generate pass completed with #{candidates.size} candidate(s)")
+      @logger.info("Pipeline generate pass completed with #{candidates.size} candidate(s) " \
+                   "(model=#{@reviewer.answered_model('generate')})")
       candidates = check_candidates(context: context, changes: changes, candidates: candidates)
 
       accepted = critique ? maybe_critique(context: context, candidates: candidates) : skip_critique(candidates)
@@ -60,7 +66,8 @@ module Aireview
         accepted,
         summary: summary,
         coverage: context.coverage,
-        fallback_models: @reviewer.fallback_models
+        fallback_models: @reviewer.fallback_models,
+        critique_weaker: critique && @reviewer.critique_weaker?
       )
     end
 
@@ -85,10 +92,15 @@ module Aireview
         generate_temperature: @config.generate_temperature,
         critique_model: @config.critique_model,
         critique_temperature: @config.critique_temperature,
-        generate_fallbacks: @config.fallback_names(:generate),
-        critique_fallbacks: critique ? @config.fallback_names(:critique) : [],
-        api_keys: @config.api_key_counts(critique ? %i[generate critique] : [:generate]),
+        generate_fallbacks: @config.fallback_names('generate'),
+        critique_fallbacks: critique ? @config.fallback_names('critique') : [],
+        sources: setting_sources(critique),
+        config_paths: @config.layer_paths,
+        warnings: @config.warnings,
+        critique_rule: critique ? @config.routing.rule : nil,
+        api_keys: @config.api_key_counts(critique ? STAGES : ['generate']),
         time_budget: @config.llm_time_budget,
+        overloaded_quarantine: @config.overloaded_quarantine,
         coverage: context.coverage,
         sizes: context.sizes
       }
@@ -96,8 +108,37 @@ module Aireview
 
     private
 
-    # Привязка к коду проверяется по диффу, который видела модель, до критика:
-    # ему уходят пометки, в отчёт — сброшенная строка и знак ненайденной цитаты.
+    # Where the model, provider and reserves of a stage came from, for --dry-run.
+    def setting_sources(critique)
+      (critique ? %w[generate critique] : %w[generate]).to_h do |stage|
+        [stage.to_sym, {
+          model: @config.stage_model_source(stage),
+          provider: @config.stage_provider_source(stage),
+          fallbacks: @config.stage_fallbacks_source(stage)
+        }]
+      end
+    end
+
+    # A stage is a request, parsing and one repair by the same model. An
+    # invalid result after the repair, like a repair with no requests left,
+    # excludes the model for the stage, and the stage starts over on the next
+    # one — with the original request. API errors pass through: the router
+    # handles them with reserves, and exhausted routes are exhausted for a
+    # restart too.
+    def run_stage(stage)
+      loop do
+        return yield
+      rescue ParseError => e
+        reason = "#{e.is_a?(RepairImpossibleError) ? 'repair impossible' : 'invalid result'}: #{e.message}"
+        excluded = @reviewer.exclude_answered_model(stage: stage, reason: reason)
+        raise unless excluded
+
+        @logger.warn("Pipeline #{stage}: restarting on the next model after #{excluded} (#{e.message})")
+      end
+    end
+
+    # Anchoring is checked against the diff the model saw, before Critique:
+    # it gets the notes, the report gets the reset line and the missing-quote mark.
     def check_candidates(context:, changes:, candidates:)
       CandidateChecker.new(
         changes: changes,
@@ -112,8 +153,8 @@ module Aireview
       candidates
     end
 
-    # Критику нечего фильтровать без кандидатов: запрос к LLM был бы пустой
-    # тратой квоты и времени.
+    # Critique has nothing to filter without candidates: the LLM request
+    # would waste quota and time.
     def maybe_critique(context:, candidates:)
       return skip_critique(candidates, 'no candidates') if candidates.empty?
 
@@ -125,16 +166,18 @@ module Aireview
       candidates_json = JSON.pretty_generate(candidates)
       candidates_by_id = index_candidates_by_id(candidates)
       critique_prompt = @context_builder.build_critique_prompt(context, candidates_json: candidates_json)
-      critique_raw = @reviewer.critique(**critique_prompt)
-      critique_result = parse_with_repair(
-        raw: critique_raw,
-        kind: 'critique result',
-        expected: :critique,
-        repair_stage: :critique,
-        critique_candidate_ids: candidates_by_id.keys
-      )
+      critique_result = run_stage('critique') do
+        parse_with_repair(
+          raw: @reviewer.critique(**critique_prompt),
+          kind: 'critique result',
+          expected: 'critique',
+          repair_stage: 'critique',
+          critique_candidate_ids: candidates_by_id.keys
+        )
+      end
       verdicts = Array(critique_result['verdicts'])
-      @logger.info("Pipeline critique pass completed with #{verdicts.size} verdict(s)")
+      @logger.info("Pipeline critique pass completed with #{verdicts.size} verdict(s) " \
+                   "(model=#{@reviewer.answered_model('critique')})")
       apply_critique_verdicts(
         verdicts: verdicts,
         candidates_by_id: candidates_by_id
@@ -187,61 +230,11 @@ module Aireview
     end
 
     def parse_expected_result(raw, expected, critique_candidate_ids: nil)
-      parsed = raw.is_a?(Hash) ? raw : JSON.parse(strip_code_fences(raw.to_s))
-
-      case expected
-      when :generate
-        parsed = normalize_generate_result(parsed)
-      when :critique
-        parsed = normalize_critique_result(parsed, critique_candidate_ids: critique_candidate_ids)
-      else
-        raise ArgumentError, "Unknown expected JSON schema: #{expected.inspect}"
-      end
-
-      parsed
-    end
-
-    def strip_code_fences(text)
-      stripped = text.to_s.strip
-      return stripped unless stripped.start_with?('```')
-
-      stripped
-        .sub(/\A```[[:alnum:]_-]*[ \t]*\r?\n?/, '')
-        .sub(/\r?\n?```[ \t]*\z/, '')
-        .strip
-    end
-
-    def normalize_generate_result(parsed)
-      parsed = {'summary' => nil, 'candidates' => parsed} if parsed.is_a?(Array)
-      validate_generate_result_shape!(parsed)
-      parsed['summary'] = nil unless parsed.key?('summary')
-      candidate_ids = parsed['candidates'].map { |candidate| normalize_id(value(candidate, 'id')) }
-      validate_identifiers!(
-        candidate_ids,
-        missing_message: 'each generate candidate must include a non-empty id',
-        duplicate_prefix: 'duplicate generate candidate ids'
-      )
-
-      parsed
-    end
-
-    def normalize_critique_result(parsed, critique_candidate_ids:)
-      validate_critique_result_shape!(parsed)
-      verdicts = parsed['verdicts']
-      verdict_ids = verdicts.map { |verdict| normalize_id(value(verdict, 'id')) }
-      validate_identifiers!(
-        verdict_ids,
-        missing_message: 'each verdict must include a non-empty id',
-        duplicate_prefix: 'duplicate verdict ids'
-      )
-      validate_expected_verdict_ids!(verdict_ids, critique_candidate_ids)
-      verdicts.each { |verdict| validate_verdict!(verdict) }
-
-      parsed
+      @parser.parse(raw, expected: expected, critique_candidate_ids: critique_candidate_ids)
     end
 
     def repair_json(raw:, kind:, expected:, stage:, critique_candidate_ids: nil)
-      schema = expected == :critique ? ReviewSchemas.critique : ReviewSchemas.generate
+      schema = expected == 'critique' ? ReviewSchemas.critique : ReviewSchemas.generate
       user_prompt = <<~PROMPT
         The previous #{kind} response was invalid.
 
@@ -254,17 +247,26 @@ module Aireview
         Invalid response:
         #{raw}
       PROMPT
-      if stage == :critique && critique_candidate_ids
+      if stage == 'critique' && critique_candidate_ids
         user_prompt << "\nExpected candidate ids: #{critique_candidate_ids.join(', ')}\n"
       end
 
       @logger.info("Pipeline #{stage} repair started for #{kind}")
-      prompt = @context_builder.check_stage_size!(stage, REPAIR_SYSTEM_PROMPT, user_prompt)
-      if stage == :critique
-        @reviewer.critique(**prompt)
+      prompt = repair_prompt(stage, user_prompt)
+      if stage == 'critique'
+        @reviewer.critique(**prompt, pinned: true)
       else
-        @reviewer.generate(**prompt)
+        @reviewer.generate(**prompt, pinned: true)
       end
+    end
+
+    # A repair that does not fit the stage limit is an invalid result of this
+    # model, not a size error of the original request: the stage moves to
+    # the next model with the original prompt.
+    def repair_prompt(stage, user_prompt)
+      @context_builder.check_stage_size!(stage, REPAIR_SYSTEM_PROMPT, user_prompt)
+    rescue ContextBudgetError => e
+      raise ParseError, "repair request does not fit the stage limit: #{e.message}"
     end
 
     def index_candidates_by_id(candidates)

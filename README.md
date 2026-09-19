@@ -49,8 +49,10 @@ installed, replace it with plain `aireview`.
 
 ## Configuration
 
-Secrets live in environment variables or in a local `.env` file. In `.env` the
-Generate and Critique models are set explicitly:
+Secrets live in environment variables or in a local `.env` file. The models of
+both stages come from the defaults shipped in the Docker image (see "Defaults
+shipped in the image"); outside the image they are set in `.env` or
+`.aireview.yml`:
 
 ```bash
 GITLAB_URL=https://gitlab.company.com
@@ -90,6 +92,88 @@ of the review: both the LLM answers and the headings of the rendered report.
 If only the LLM traffic has to go through a proxy, set `LLM_HTTP_PROXY` or
 `llm.http_proxy`. That configures RubyLLM only; requests to GitLab and Jira
 keep going directly.
+
+### Defaults shipped in the image
+
+Models, timeouts and the report language are baked into the image as
+`config/defaults.yml`; inside the image `AIREVIEW_DEFAULTS` points at it. A
+project in an organization has nothing to configure: no `.aireview.yml`, no
+variables with model names. Changing the model for every project is one
+edit of that file and a new image release. Outside the image the variable is
+unset and the layer does not exist, so local runs are unaffected; point
+`AIREVIEW_DEFAULTS` at any file to get the same layer elsewhere. The
+defaults define a shared pool of five Gemini models (see "Shared model
+pool"): Generate starts from a mid-range model and goes round the pool,
+Critique takes the strongest live model not below the one Generate answered
+with; every model of the pool is confirmed by `aireview models check` on
+release.
+
+The configuration layers, weakest first:
+
+1. built-in values (`Config::DEFAULTS`);
+2. image defaults — the file from `AIREVIEW_DEFAULTS`; no variable, no layer;
+3. the project's `.aireview.yml`;
+4. environment variables (`LLM_GENERATE_MODEL` and the rest);
+5. CLI flags (`--generate-model`, `--critique-model`, the temperatures).
+
+Layers merge by key, so a project overrides only what it needs — with two
+caveats about the pool:
+
+- a `llm.generate.model` of its own (in YAML or `LLM_GENERATE_MODEL`) **takes
+  the stage out of the pool**: its chain is that model plus its own
+  `fallbacks`, if any; the image models are not picked up for that stage and
+  the critique rank rule does not apply. To change only the starting model
+  while staying in the pool, set `llm.generate.start` / `LLM_GENERATE_START`
+  — or replace the whole pool through `llm.models` / `LLM_MODELS`;
+- every pool model in the image carries an explicit provider (`gemini`), so
+  `LLM_PROVIDER=ollama` on its own does not move the Gemini pool to Ollama:
+  it only changes the default provider of models without one. A project on
+  Ollama sets its own models — its own pool (`LLM_MODELS=ollama/qwen2.5-coder:7b,…`)
+  or per-stage `model`s.
+
+The shared settings `llm.temperature`, `llm.max_prompt_chars` and the default
+provider `llm.provider` (env: `LLM_TEMPERATURE`, `LLM_MAX_PROMPT_CHARS`,
+`LLM_PROVIDER`) apply to the stages layer by layer: a stage value from the
+image defaults does not beat a shared value from the project or the
+environment, while within one layer the stage value still wins. For stages
+on their own chains the `fallbacks` array is replaced as a whole when given
+explicitly; `fallbacks: []` removes the reserves; a reserve without a
+`provider` of its own inherits the stage provider — if a project overrode the
+stage provider (`LLM_GENERATE_PROVIDER=ollama`) while inherited reserves
+without an explicit provider remain in the chain, they silently become
+"models" of the new provider. `--dry-run` warns about that and prints, for
+every model, the layer it came from:
+
+```
+=== LLM SETTINGS ===
+Config: image defaults /app/config/defaults.yml, .aireview.yml /app/.aireview.yml
+Generate: gemini-3.7-flash temperature=0.1 (model from image defaults, provider from image defaults)
+  fallbacks: gemini/gemini-3.6-flash -> ... (fallbacks from image defaults)
+Critique: qwen2.5-coder:7b temperature=0 (model from .aireview.yml, provider from .aireview.yml)
+Time budget: 1800s, overloaded quarantine: 120s
+```
+
+In pool mode the model source is the layer that set the stage `start` or the
+`llm.models` list itself; `--critique-model` with a pool model shows up as
+`model from cli`.
+
+An `AIREVIEW_DEFAULTS` that points at a missing file is a configuration
+error: such an image was built wrong, and failing at once beats reviewing
+with the wrong models. Keys and tokens never live in `config/defaults.yml`.
+
+Changing the default models or the pool order changes the review key (see "A
+single comment per merge request"). What happens to open MRs depends on
+`review_mode`: in `update` the review re-runs on the next push to the MR, in
+`once` (as in the CI template) only on a job Retry. In `update` this is a
+one-off burst of requests to the provider — better not to ship such a
+release at peak hours.
+
+No model is probed before a review: there are no test requests to five
+models per MR, availability is learned from the working requests — the first
+Generate request is the probe, and what the router learns it remembers until
+the end of the run (see "Fallback models and keys"). The separate smoke test
+of every model with both schemas (`aireview models check`) runs on an image
+release and on a schedule, not on MRs.
 
 ### Local Ollama
 
@@ -169,15 +253,16 @@ address with `/v1` matches the
 local model it can be raised, but not without limit: a hung request holds
 the job for exactly that long while a fallback model sits idle. An
 "overloaded" (503) answer from the provider or a timeout does not fail the
-run right away: without a fallback model such a request gets up to five
-attempts, the original one and four retries with pauses of about 2, 5, 5 and
-5 minutes; with a fallback model, one short retry and a switch (see
-"Fallback models and keys"). Only the failed stage is repeated, not the
-whole run.
+run right away: the model gets one short retry (~30 s), then goes into
+quarantine for two minutes while the request goes to the next model;
+without a fallback model the router waits for the quarantine to end and
+tries once more. Three requests per model per stage in total (see "Fallback
+models and keys"). Only the failed stage is repeated, not the whole run.
 
-Project rules live in `.aireview.yml`. In YAML the `generate.model` and
-`critique.model` settings are required for each stage and are not inherited
-from the base `llm` settings. `llm.provider` is used as the default when
+Project rules live in `.aireview.yml`. The `generate.model` and
+`critique.model` settings are not inherited from the base `llm` settings: a
+review does not start when a stage has no model in the image defaults, the
+YAML or the environment. `llm.provider` is used as the default when
 `generate.provider` or `critique.provider` is not set:
 
 ```yaml
@@ -300,31 +385,119 @@ fallback model and a provider can have a fallback key:
   forbid circumventing its limits regardless of the project's billing. Keys
   live only in the environment, never in `.aireview.yml`.
 
+#### Shared model pool
+
+Instead of two independent chains a single pool can be configured:
+`llm.models` in order of priority (the first is the preferred one for
+Critique). Generate goes through the pool from `generate.start` downwards
+and round again; Critique takes the first live model **not below the one
+that actually answered in Generate** (`critique.rank: not_below_generate`,
+the default), with self-critique by the same model as the last permitted
+option. "Above" and "below" are positions in the list, they are not derived
+from model names:
+
+```yaml
+llm:
+  provider: gemini
+  models:                          # order = priority for Critique
+    - gemini-3.8-flash
+    - gemini-3.7-flash
+    - gemini-3.6-flash
+    - provider: ollama
+      model: qwen2.5-coder:7b
+      max_prompt_chars: 20000
+  generate:
+    start: gemini-3.7-flash        # Generate starts here, then downwards and round
+  critique:
+    rank: not_below_generate       # or any — the chains are independent
+    allow_weaker: false            # true — go below when nothing above is alive
+```
+
+Environment equivalents: `LLM_MODELS=gemini/gemini-3.8-flash,gemini/gemini-3.7-flash,…`,
+`LLM_GENERATE_START`, `LLM_CRITIQUE_START`, `LLM_CRITIQUE_RANK`,
+`LLM_CRITIQUE_ALLOW_WEAKER`. The rules:
+
+- no permitted live model for Critique and `allow_weaker: false` — the run
+  fails, candidates are not published without a critique; with
+  `allow_weaker: true` Critique goes below Generate and the report gets a
+  "Critique ran on a model weaker than Generate" line;
+- a stage with a `model` of its own (in YAML, the environment or
+  `--generate-model` with a model outside the pool) does not use the pool:
+  its chain is independent and the rank rule does not apply, as with
+  `rank: any`; `--generate-model` / `--critique-model` with a model **from**
+  the pool bring the stage back into the pool and make that model the start
+  (the stage's own `model` and `fallbacks` are reset), with a model outside
+  the pool — a single chain without reserves;
+- a project that replaces the whole pool (`llm.models` in YAML or
+  `LLM_MODELS`) need not repeat `start`: a start inherited from the image
+  that the new pool does not contain is replaced by the first model of the
+  new pool with a warning in the log. A start set in the same layer as the
+  pool or above it must be in the pool — a typo there stays a configuration
+  error;
+- `critique.start` goes first only when the rank permits it; a start below
+  the model that answered in Generate is skipped with a warning when
+  `allow_weaker` is off — it does not bypass the ban on a weaker critique;
+- the review key (see "A single comment per merge request") includes the
+  whole pool together with the critique policy: its order decides which
+  model checks the findings, not just what to fall back to. Reordering the
+  pool, changing `start`, `rank` or `allow_weaker` — a new key, open MRs are
+  re-reviewed on the next push; moving from per-stage chains to the pool —
+  the same, once;
+- `--dry-run` prints the chains of both stages and a `Critique rule: …` line.
+
 What happens on which error:
 
 | Error | Reaction |
 |---|---|
-| Daily quota (`quotaId` like `…PerDay…` in Google's answer) | No retries: the next key on the same model. The "key + model" pair is remembered until the end of the run so that Critique and the JSON repair do not hit it again. Out of keys: the next model with the first key. |
-| Per-minute limit (429 with a "retry in N s" hint) | Retry after the hinted delay; one retry while there is somewhere to switch to, up to three on the last route. Then the next key, then the next model. |
-| Overloaded (503) or timeout | One short retry (~30 s) and the next model with the same key. The last model in the chain gets the full 2/5/5/5 minute schedule. |
-| Other API errors (schema, context length, auth) | The run fails right away: a fallback model would answer the same. |
+| Daily quota (`quotaId` like `…PerDay…` in Google's answer) | No retries: the next key on the same model. The "key + model" pair is remembered until the end of the run so that Critique and the JSON repair do not hit it again. Out of keys: the model is excluded until the end of the run, the request goes to the next one. |
+| Per-minute limit (429 with a "retry in N s" hint) | One retry after the hinted delay, then the next key. Out of keys: the model is quarantined for the hinted time, the request goes to the next one. |
+| Overloaded (503) or timeout | One short retry (~30 s), then a quarantine of `llm.overloaded_quarantine` / `LLM_OVERLOADED_QUARANTINE` (120 s by default) and the next model with the same key. |
+| The provider has no such model (the answer text names the model: retired, a typo, not pulled into Ollama) | No retries: the model is excluded until the end of the run, the request goes to the next one. A bare 404 without such text is fatal: a wrong `LLM_API_BASE` answers the same, and the next model will not help. |
+| An invalid result (not JSON, not the schema, foreign ids in the verdicts) — and still invalid after one repair by the same model | The model is excluded for this stage, the stage starts over on the next model with the original request. For Critique the candidates already obtained are kept, Generate is not repeated. |
+| Other API errors (context length, auth) | The run fails right away: a fallback model would answer the same. |
 
-All of this is bounded by a time budget for the LLM part of the run:
-`llm.time_budget` / `LLM_TIME_BUDGET`, 1800 seconds by default. A pause that
-does not fit into the remainder is skipped and the request timeout is capped
-by the remainder; when the time is up, the run fails with an error listing
-everything that was tried. Because of this keep `LLM_TIMEOUT` around 120–300
-seconds: one hung request must not eat the whole budget.
+The chain is walked round: once every model has been tried, the router
+returns to those whose quarantine has expired; when all are quarantined, it
+waits for the nearest release. The last model in the list is nothing
+special, nobody gets a long retry schedule. Two limits keep the walk
+finite:
+
+- **three requests per model per stage** (`MAX_ATTEMPTS_PER_MODEL`). Every
+  request sent counts regardless of its outcome, including the short retry
+  and the JSON repair; the keys of one model share one counter, a quarantine
+  does not reset it. Out of requests — the model leaves the stage; a JSON
+  repair without requests left is not sent, and the result counts as invalid
+  (see the table). When every model of the stage is out or excluded, the
+  stage ends at once, quarantines are not waited for;
+- **the time budget** of the LLM part of the run: `llm.time_budget` /
+  `LLM_TIME_BUDGET`, 1800 seconds by default. A pause or a quarantine wait
+  that does not fit into the remainder is skipped, the request timeout is
+  capped by the remainder; when the time is up, the run fails with an error
+  listing everything that was tried. Because of this keep `LLM_TIMEOUT`
+  around 120–300 seconds: one hung request must not eat the whole budget.
+
+**A single chain** — one model without reserves, typically Ollama on its own
+box — behaves differently from earlier versions: instead of seventeen minutes
+of waiting (retries after 2, 5, 5 and 5 minutes) the model gets three
+requests — the original, a short retry after ~30 s and one more after the
+two-minute quarantine; after the third failure the stage fails. A timeout is
+a failure too, and a quarantine will not help a slow model: it only
+lengthens the pause between attempts. A slow local model needs an
+`LLM_TIMEOUT` with room for the largest request and an `LLM_TIME_BUDGET`
+that fits three such requests with their pauses; `LLM_OVERLOADED_QUARANTINE`
+is about a model that is temporarily overloaded and should come back.
 
 The review key (see "A single comment per merge request") is computed from
 the configured primary model, not from the one that answered: a review made
 by a fallback model is not rewritten on the next push without changes in the
-MR, and adding a fallback model to the config does not re-run the review on
-every open MR. When a stage went to a fallback model, the report ends with a
-`Fallback model used: critique — …` line. A key switch stays in the log only,
-and key values never reach the log. `--dry-run` prints the model chains and
-the number of keys per provider, `--no-fallbacks` leaves one model and one
-key per stage.
+MR, and adding a fallback model to a per-stage chain does not re-run the
+review on every open MR. When a stage went to a fallback model, the report
+ends with a `Fallback model used: critique — …` line; the log names, for
+every stage, the model that answered and its place in the chain
+(`model=gemini/gemini-3.6-flash (2/5)`). A key switch stays in the log only,
+and key values never reach the log. `--dry-run` prints the model chains, the
+number of keys per provider, the time budget and the quarantine length;
+`--no-fallbacks` leaves one model and one key per stage.
 
 ### Checking that findings point at the diff
 
@@ -372,6 +545,42 @@ bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project
 - `--no-fallbacks` uses only the primary model and the first API key of each stage.
 - `--review-mode MODE` sets the behaviour when a review has already been published: `update` or `once`.
 - `--force` reviews again even when a review for this state of the MR is already published.
+
+### Checking the models
+
+```bash
+bundle _2.3.26_ exec bin/aireview models check
+bundle _2.3.26_ exec bin/aireview models check --config .aireview.yml --strict --verbose
+```
+
+Every model of both stage chains gets two small requests — one with the
+production Generate schema and one with the Critique schema — on a tiny
+synthetic MR, with the same system prompts as a review. The answer goes
+through the same validation as in a run (JSON shape, candidate and verdict
+ids). The provider's catalog is not consulted: "the model is listed" does
+not mean "our request with the schema passes on it". There are no reserves,
+retries or quarantine here — this is a check, not a review; only a
+per-minute limit gets one retry after the provider's hint.
+
+```
+Checking 5 model(s) with the generate and critique schemas
+gemini/gemini-3.7-flash          generate ok (4.6s)
+gemini/gemini-3.7-flash          critique ok (6.9s)
+gemini/gemini-3.6-flash          generate unverified: This model is currently experiencing high demand. …
+gemini/gemini-9.9-nope           generate missing: models/gemini-9.9-nope is not found for API version v1beta, …
+ollama/qwen2.5-coder:7b          generate skipped: Connection refused
+Result: 6 ok, 1 unverified, 2 missing, 2 skipped -> FAILED
+```
+
+Statuses: `ok` — an answer matching the schema; `missing` — the provider
+has no such model (retired, a typo, not pulled into Ollama); `invalid` — it
+answered, but not by the schema; `unverified` — the provider could not
+answer right now (overload, quota, timeout), the model is not at fault but
+not confirmed either; `failed` — other API errors; `skipped` — Ollama is
+unreachable where the check runs (a CI runner has none). The exit code is 0
+only when every model is `ok` or `skipped`; with `--strict` — only `ok`: on
+a box where Ollama must be running, an unreachable Ollama is a failed check,
+not a skip.
 
 ### A single comment per merge request
 
@@ -472,6 +681,46 @@ local HTTP proxy (`wireproxy`, for instance) before `aireview` starts and point
 `LLM_HTTP_PROXY` at it. That avoids setting global `https_proxy`/`no_proxy`, so
 GitLab and Jira stay on direct connections while RubyLLM goes through the
 tunnel.
+
+### Including the job template
+
+Instead of copying the job into every project, it lives in this repository
+as `templates/review.gitlab-ci.yml`. A project's `.gitlab-ci.yml` keeps only:
+
+```yaml
+include:
+  - project: your-group/aireview
+    ref: stable
+    file: /templates/review.gitlab-ci.yml
+```
+
+The template is written for shell-executor runners (the image runs through
+`docker run` with secrets passed by name) and carries `[skip review]`,
+`resource_group`, `allow_failure` and `REVIEW_MODE=once`. Models come from
+the image defaults, `.aireview.yml` is mounted into the container only when
+the project has one. The job runs in the `.post` stage — it exists in every
+pipeline, so a project does not declare `stages`; to move the review to
+another stage, add `aireview: {stage: review}` to the project file. Every
+variable the config reads (`Config.env_names`: models, providers, reserves,
+temperatures, limits, `OLLAMA_API_BASE` and so on) is passed into the
+container by name, so a project can override anything through its CI/CD
+variables — for instance, swap an unavailable model with `LLM_CRITIQUE_MODEL`
+without waiting for an image release.
+
+Secrets stay CI/CD variables **of the project**: group variables are readable
+by any merge request of any project in the group.
+
+The `stable` branch is managed: the copy of the template there pins
+`AIREVIEW_IMAGE_TAG` to a verified release. Updating or rolling back every
+project that includes the template is one edit of `stable`. A project can
+pin another version by overriding `AIREVIEW_IMAGE_TAG` in its `variables`.
+
+A release of the image is: tag → `aireview models check` on the image
+defaults (an API error or an answer off the schema for any model stops the
+pipeline, the image is not built, the previous version stays in the
+registry) → build and push → set the new tag in `stable`. The same check on
+a schedule (once a day) is the early signal that the provider retired a
+model — otherwise the first to learn about it is a live MR.
 
 ## Docker
 

@@ -613,6 +613,16 @@ RSpec.describe Aireview::Config do
         end
       end
 
+      it 'reads the overloaded quarantine with a default of two minutes' do
+        Dir.mktmpdir do |dir|
+          expect(load_with(dir).overloaded_quarantine).to eq(120)
+          expect(load_with(dir, env: {'LLM_OVERLOADED_QUARANTINE' => '300'}).overloaded_quarantine).to eq(300)
+          expect(load_with(dir, yaml: "llm:\n  overloaded_quarantine: 60\n").overloaded_quarantine).to eq(60)
+          expect { load_with(dir, env: {'LLM_OVERLOADED_QUARANTINE' => '0'}).overloaded_quarantine }
+            .to raise_error(Aireview::ConfigError, /llm.overloaded_quarantine must be a positive integer/)
+        end
+      end
+
       it 'reads the LLM time budget with a default of 30 minutes' do
         Dir.mktmpdir do |dir|
           expect(load_with(dir).llm_time_budget).to eq(1_800)
@@ -620,6 +630,319 @@ RSpec.describe Aireview::Config do
           expect(load_with(dir, yaml: "llm:\n  time_budget: 900\n").llm_time_budget).to eq(900)
           expect { load_with(dir, env: {'LLM_TIME_BUDGET' => 'soon'}) }
             .to raise_error(Aireview::ConfigError, 'LLM_TIME_BUDGET must be an integer, got "soon"')
+        end
+      end
+    end
+
+    describe 'image defaults layer' do
+      let(:image_defaults) { <<~YAML }
+        review_language: en
+        llm:
+          provider: gemini
+          timeout: 300
+          generate:
+            provider: gemini
+            model: image-generate
+            fallbacks:
+              - provider: gemini
+                model: image-generate-reserve
+          critique:
+            provider: gemini
+            model: image-critique
+      YAML
+
+      def load_layered(dir, image: image_defaults, yaml: nil, env: {})
+        image_path = File.join(dir, 'defaults.yml')
+        File.write(image_path, image) if image
+        File.write(File.join(dir, '.aireview.yml'), yaml) if yaml
+        env = env.merge('AIREVIEW_DEFAULTS' => image_path) if image
+        described_class.load(cwd: dir, env: env, logger: Logger.new(nil))
+      end
+
+      it 'takes models from the image when the project has no config' do
+        Dir.mktmpdir do |dir|
+          config = load_layered(dir)
+
+          expect(config.generate_model).to eq('image-generate')
+          expect(config.critique_model).to eq('image-critique')
+          expect(config.fallback_names(:generate)).to eq(['gemini/image-generate-reserve'])
+          expect(config.llm_timeout).to eq(300)
+          expect(config.review_language).to eq('en')
+          expect(config.config_path).to be_nil
+          expect(config.layer_paths).to eq('image defaults' => File.join(dir, 'defaults.yml'))
+          expect { config.require_models! }.not_to raise_error
+        end
+      end
+
+      it 'lets the project YAML override the image and env override the project' do
+        Dir.mktmpdir do |dir|
+          config = load_layered(
+            dir,
+            yaml: "llm:\n  generate:\n    model: project-generate\n  critique:\n    model: project-critique\n",
+            env: {'LLM_CRITIQUE_MODEL' => 'env-critique'}
+          )
+
+          expect(config.generate_model).to eq('project-generate')
+          expect(config.critique_model).to eq('env-critique')
+          expect(config.source_of('llm', 'generate', 'model')).to eq('.aireview.yml')
+          expect(config.source_of('llm', 'critique', 'model')).to eq('env')
+          expect(config.source_of('llm', 'generate', 'fallbacks')).to eq('image defaults')
+          expect(config.source_of('llm', 'timeout')).to eq('image defaults')
+          expect(config.source_of('llm', 'temperature')).to eq('built-in')
+          expect(config.source_of('llm', 'generate', 'max_prompt_chars')).to be_nil
+        end
+      end
+
+      it 'lets general provider and temperature from a higher layer beat stage values from the image' do
+        Dir.mktmpdir do |dir|
+          image = <<~YAML
+            llm:
+              provider: gemini
+              temperature: 0
+              generate:
+                provider: gemini
+                model: image-generate
+                temperature: 0.1
+                fallbacks:
+                  - provider: gemini
+                    model: image-reserve
+              critique:
+                provider: gemini
+                model: image-critique
+                temperature: 0
+          YAML
+          env = {
+            'LLM_PROVIDER' => 'ollama',
+            'LLM_TEMPERATURE' => '0.7',
+            'LLM_GENERATE_MODEL' => 'qwen2.5-coder:7b',
+            'LLM_CRITIQUE_MODEL' => 'qwen2.5-coder:7b'
+          }
+          config = load_layered(dir, image: image, env: env)
+
+          expect(config.generate_provider).to eq('ollama')
+          expect(config.critique_provider).to eq('ollama')
+          expect(config.generate_temperature).to eq(0.7)
+          expect(config.critique_temperature).to eq(0.7)
+          expect(config.stage_provider_source('generate')).to eq('env')
+          # The explicit provider of a reserve is neither inherited nor changed.
+          expect(config.stage_chain(:generate).map(&:to_s)).to eq(%w[ollama/qwen2.5-coder:7b gemini/image-reserve])
+
+          config = load_layered(dir, image: image, yaml: "llm:\n  provider: ollama\n  generate:\n    model: g\n")
+          expect(config.generate_provider).to eq('ollama')
+          expect(config.critique_provider).to eq('ollama')
+          expect(config.generate_temperature).to eq(0.1)
+        end
+      end
+
+      it 'prefers the stage value within a layer and a higher-layer stage value over a general one' do
+        Dir.mktmpdir do |dir|
+          image = "llm:\n  provider: gemini\n  generate:\n    provider: ollama\n    model: g\n  critique:\n    model: c\n"
+          config = load_layered(dir, image: image)
+          expect(config.generate_provider).to eq('ollama')
+          expect(config.critique_provider).to eq('gemini')
+
+          config = load_layered(dir, image: image, yaml: "llm:\n  critique:\n    provider: ollama\n", env: {'LLM_PROVIDER' => 'gemini'})
+          expect(config.generate_provider).to eq('gemini')
+          expect(config.critique_provider).to eq('gemini')
+          expect(config.stage_provider_source('critique')).to eq('env')
+
+          config = load_layered(dir, image: image, env: {'LLM_MAX_PROMPT_CHARS' => '1000', 'LLM_CRITIQUE_MAX_PROMPT_CHARS' => '500'})
+          expect(config.max_prompt_chars(:generate)).to eq(1000)
+          expect(config.max_prompt_chars(:critique)).to eq(500)
+        end
+      end
+
+      it 'keeps image fallbacks when the project overrides only the model' do
+        Dir.mktmpdir do |dir|
+          config = load_layered(dir, yaml: "llm:\n  generate:\n    model: project-generate\n")
+
+          expect(config.stage_chain(:generate).map(&:to_s)).to eq(%w[gemini/project-generate gemini/image-generate-reserve])
+        end
+      end
+
+      it 'drops image fallbacks when the project sets an empty list' do
+        Dir.mktmpdir do |dir|
+          config = load_layered(dir, yaml: "llm:\n  generate:\n    fallbacks: []\n")
+
+          expect(config.fallback_names(:generate)).to eq([])
+        end
+      end
+
+      it 'keeps stage settings of a config built from a hash after CLI overrides' do
+        data = {
+          'llm' => {
+            'provider' => 'ollama', 'temperature' => 0.7, 'max_prompt_chars' => 1000,
+            'generate' => {'model' => 'g'}, 'critique' => {'model' => 'c'}
+          }
+        }
+        config = described_class.new(data, config_path: nil, logger: Logger.new(nil))
+          .with_overrides(generate_model: 'cli-generate')
+
+        expect(config.generate_model).to eq('cli-generate')
+        expect(config.generate_provider).to eq('ollama')
+        expect(config.critique_provider).to eq('ollama')
+        expect(config.generate_temperature).to eq(0.7)
+        expect(config.max_prompt_chars(:generate)).to eq(1000)
+        expect(config.source_of('llm', 'generate', 'model')).to eq('cli')
+        expect(config.source_of('llm', 'provider')).to eq('config')
+      end
+
+      it 'reports CLI overrides as their own layer' do
+        Dir.mktmpdir do |dir|
+          config = load_layered(dir).with_overrides(generate_model: 'cli-generate')
+
+          expect(config.generate_model).to eq('cli-generate')
+          expect(config.source_of('llm', 'generate', 'model')).to eq('cli')
+          expect(config.source_of('llm', 'critique', 'model')).to eq('image defaults')
+        end
+      end
+
+      it 'works without the image layer' do
+        Dir.mktmpdir do |dir|
+          config = load_layered(dir, image: nil, yaml: "llm:\n  generate:\n    model: g\n  critique:\n    model: c\n")
+
+          expect(config.generate_model).to eq('g')
+          expect(config.layer_paths).to eq('.aireview.yml' => File.join(dir, '.aireview.yml'))
+          expect(config.source_of('llm', 'generate', 'model')).to eq('.aireview.yml')
+        end
+      end
+
+      it 'fails early when AIREVIEW_DEFAULTS points to a missing file' do
+        Dir.mktmpdir do |dir|
+          missing = File.join(dir, 'nope.yml')
+          expect { described_class.load(cwd: dir, env: {'AIREVIEW_DEFAULTS' => missing}, logger: Logger.new(nil)) }
+            .to raise_error(Aireview::ConfigError, "AIREVIEW_DEFAULTS points to a missing file: #{missing}")
+        end
+      end
+
+      it 'warns when a provider override makes inherited fallbacks change provider' do
+        Dir.mktmpdir do |dir|
+          image = <<~YAML
+            llm:
+              generate:
+                model: image-generate
+                fallbacks:
+                  - image-reserve
+                  - provider: gemini
+                    model: explicit-reserve
+              critique:
+                model: image-critique
+          YAML
+          config = load_layered(dir, image: image, env: {'LLM_GENERATE_PROVIDER' => 'ollama'})
+
+          expect(config.stage_provider_source('generate')).to eq('env')
+          expect(config.stage_provider_warnings('generate')).to eq([
+            'generate: provider "ollama" comes from env, but fallbacks without an explicit provider ' \
+            'come from image defaults and now inherit it: image-reserve'
+          ])
+          expect(config.stage_provider_warnings('critique')).to eq([])
+        end
+      end
+
+      it 'does not warn when fallbacks carry their own provider or come from the same layer' do
+        Dir.mktmpdir do |dir|
+          config = load_layered(dir, env: {'LLM_GENERATE_PROVIDER' => 'ollama'})
+          expect(config.stage_provider_warnings('generate')).to eq([])
+
+          config = load_layered(
+            dir,
+            image: nil,
+            yaml: "llm:\n  generate:\n    provider: ollama\n    model: g\n    fallbacks: [r]\n  critique:\n    model: c\n"
+          )
+          expect(config.stage_provider_warnings('generate')).to eq([])
+        end
+      end
+    end
+
+    describe 'replacing the image pool from a higher layer' do
+      let(:image) do
+        <<~YAML
+          llm:
+            provider: gemini
+            models: [gemini-a, gemini-b]
+            generate:
+              start: gemini-b
+            critique:
+              start: gemini-a
+        YAML
+      end
+
+      def load_pool(dir, env: {}, yaml: nil, logger: Logger.new(nil))
+        File.write(File.join(dir, 'defaults.yml'), image)
+        File.write(File.join(dir, '.aireview.yml'), yaml) if yaml
+        env = env.merge('AIREVIEW_DEFAULTS' => File.join(dir, 'defaults.yml'), 'GEMINI_API_KEY' => 'k')
+        described_class.load(cwd: dir, env: env, logger: logger)
+      end
+
+      it 'starts from the first model of the new pool when the inherited start is not in it' do
+        Dir.mktmpdir do |dir|
+          log_output = StringIO.new
+          config = load_pool(dir, env: {'LLM_MODELS' => 'gemini/custom-a,gemini/custom-b'}, logger: Logger.new(log_output))
+
+          expect(config.stage_chain(:generate).map(&:to_s)).to eq(%w[gemini/custom-a gemini/custom-b])
+          expect(config.routing.critique_chain(after: config.routing.pool[1]).map(&:to_s))
+            .to eq(%w[gemini/custom-a gemini/custom-b])
+          expect { config.require_llm_configuration! }.not_to raise_error
+          expect(config.warnings).to eq([
+            'llm.generate.start gemini-b is not in the overriding llm.models, starting from gemini/custom-a',
+            'llm.critique.start gemini-a is not in the overriding llm.models, starting from gemini/custom-a'
+          ])
+          expect(log_output.string).not_to include('llm.generate.start')
+          expect(config.stage_model_source('generate')).to eq('env')
+        end
+      end
+
+      it 'keeps an inherited start that the new pool still contains' do
+        Dir.mktmpdir do |dir|
+          config = load_pool(dir, yaml: "llm:\n  models: [gemini-c, gemini-b]\n")
+          expect(config.stage_chain(:generate).map(&:to_s)).to eq(%w[gemini/gemini-b gemini/gemini-c])
+        end
+      end
+
+      it 'still rejects a wrong start given in the same or a higher layer than the pool' do
+        Dir.mktmpdir do |dir|
+          config = load_pool(dir, env: {'LLM_MODELS' => 'gemini/custom-a', 'LLM_GENERATE_START' => 'gemini-b'})
+          expect { config.stage_chain(:generate) }
+            .to raise_error(Aireview::ConfigError, 'gemini-b is not in llm.models: gemini/custom-a')
+
+          config = load_pool(dir, yaml: "llm:\n  models: [gemini-c]\n  generate:\n    start: gemini-b\n")
+          expect { config.stage_chain(:generate) }
+            .to raise_error(Aireview::ConfigError, 'gemini-b is not in llm.models: gemini/gemini-c')
+        end
+      end
+    end
+
+    describe 'config/defaults.yml shipped in the image' do
+      it 'is a complete pool configuration with an explicit provider on every model' do
+        path = File.expand_path('../config/defaults.yml', __dir__)
+        Dir.mktmpdir do |dir|
+          config = described_class.load(cwd: dir, env: {'AIREVIEW_DEFAULTS' => path}, logger: Logger.new(nil))
+
+          expect { config.require_models! }.not_to raise_error
+          expect(config.routing).to be_a(Aireview::ModelPool)
+          expect(config.routing.pool_stage?('generate') && config.routing.pool_stage?('critique')).to be(true)
+          pool = config.routing.pool
+          expect(pool.size).to eq(5)
+          expect(pool.map(&:model).uniq.size).to eq(5)
+          expect(pool.map(&:provider).uniq).to eq(['gemini'])
+          expect(pool.map(&:model)).to all(match(/\A[a-z0-9.-]+\z/))
+          expect(pool.map(&:model)).not_to include(a_string_matching(/preview|exp/))
+          # Generate does not start from the strongest model; Critique does.
+          expect(config.stage_chain(:generate).first.model).to eq('gemini-3.7-flash')
+          expect(config.stage_chain(:critique).first.model).to eq('gemini-3.8-flash')
+          expect(config.routing.rule).to eq('not_below_generate')
+          expect(config.generate_temperature).to eq(0.1)
+          expect(config.critique_temperature).to eq(0)
+          expect(config.llm_timeout).to eq(180)
+          expect(config.overloaded_quarantine).to eq(120)
+          expect(config.stage_provider_warnings('generate')).to eq([])
+          expect(config.stage_model_source('generate')).to eq('image defaults')
+          expect(config.stage_fallbacks_source('critique')).to eq('image defaults')
+          expect(config.with_overrides(critique_model: 'gemini-3.6-flash').stage_model_source('critique')).to eq('cli')
+
+          raw = YAML.load_file(path)
+          raw.dig('llm', 'models').each { |item| expect(item).to include('provider' => 'gemini') }
+          expect(raw.to_s).not_to match(/api_key|token/i)
         end
       end
     end

@@ -115,7 +115,7 @@ RSpec.describe Aireview::ContextBuilder do
       changes = [change('a.rb', hunk(1, lines: 40)), change('b.rb', hunk(2, lines: 40)), change('c.rb', hunk(3, lines: 40))]
       full = builder.prepare(merge_request: merge_request, changes: changes)
       reserve = described_class::CANDIDATES_RESERVE_CHARS + described_class::CANDIDATES_HEADER.length
-      config = config_double(max_prompt_chars: full.sizes[:stages][:critique][:request] + reserve - 300)
+      config = config_double(max_prompt_chars: full.sizes[:stages]['critique'][:request] + reserve - 300)
       builder = described_class.new(config: config, logger: Logger.new(nil))
 
       without_critique = builder.prepare(merge_request: merge_request, changes: changes, critique: false)
@@ -129,7 +129,7 @@ RSpec.describe Aireview::ContextBuilder do
     it 'raises instead of re-truncating when candidates exceed their reserve' do
       context = builder.prepare(merge_request: merge_request, changes: changes)
       reserve = described_class::CANDIDATES_RESERVE_CHARS + described_class::CANDIDATES_HEADER.length
-      limit = context.sizes[:stages][:critique][:request] + reserve + 100
+      limit = context.sizes[:stages]['critique'][:request] + reserve + 100
       config = config_double(max_prompt_chars: limit)
       builder = described_class.new(config: config, logger: Logger.new(nil))
       context = builder.prepare(merge_request: merge_request, changes: changes)
@@ -165,8 +165,8 @@ RSpec.describe Aireview::ContextBuilder do
 
       expect(context.sizes[:hunks_shown]).to eq(3)
       expect(context.sizes[:hunks_total]).to eq(3)
-      expect(context.sizes[:stages].keys).to eq(%i[generate critique])
-      expect(context.sizes[:stages][:critique][:max_prompt_chars]).to eq(400_000)
+      expect(context.sizes[:stages].keys).to eq(%w[generate critique])
+      expect(context.sizes[:stages]['critique'][:max_prompt_chars]).to eq(400_000)
     end
 
     it 'scrubs secrets from MR, Jira, instructions, and changes' do

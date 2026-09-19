@@ -3,17 +3,27 @@ require 'json'
 require 'timeout'
 
 module Aireview
-  # Классификация ошибки LLM-запроса. Отвечает только на вопрос «что это»,
-  # решение «повторить, сменить ключ или модель» принимает LlmRouter.
+  # Classifies an LLM request error. Answers only "what is it"; the decision
+  # to retry, switch the key or the model belongs to LlmRouter.
   #
-  # :daily_quota — суточная квота проекта на модель, повторы бесполезны;
-  # :rate_limit  — минутный лимит, пройдёт через подсказанное время;
-  # :overloaded  — 503/«high demand» у модели;
-  # :timeout     — ответа нет дольше LLM_TIMEOUT;
-  # :fatal       — ошибка API, которую резервы не лечат;
-  # :unhandled   — не ошибка провайдера, пробрасывается как есть.
+  # :daily_quota — the project's daily quota for the model, retries are useless;
+  # :rate_limit  — a per-minute limit, passes after the hinted time;
+  # :overloaded  — 503 / "high demand" on the model;
+  # :timeout     — no answer for longer than LLM_TIMEOUT;
+  # :unavailable — the provider has no such model: retired, a typo, not pulled into Ollama;
+  # :fatal       — an API error that reserves do not cure;
+  # :unhandled   — not a provider error, re-raised as is.
   module LlmFailure
-    KINDS = %i[daily_quota rate_limit overloaded timeout fatal unhandled].freeze
+    KINDS = %i[daily_quota rate_limit overloaded timeout unavailable fatal unhandled].freeze
+    # Only by the provider's text about the model: a bare 404 is also what a
+    # wrong LLM_API_BASE or proxy answers, and the next model will not help.
+    # Ollama: `model 'x' not found` (through /v1) and `model "x" not found,
+    # try pulling it first` (older versions and /api).
+    UNAVAILABLE_MODEL_TEXT = Regexp.union(
+      /\bmodels?\/[\w.:-]+ is not found\b/i,
+      /\bis not supported for generateContent\b/i,
+      /\bmodel ['"][^'"]+['"] not found\b/i
+    )
     QUOTA_FAILURE_TYPE = 'type.googleapis.com/google.rpc.QuotaFailure'
     DAILY_QUOTA_ID = /PerDay/i
     DAILY_QUOTA_TEXT = /\bper\s+day\b|\bdaily\b/i
@@ -21,18 +31,22 @@ module Aireview
 
     module_function
 
-    # Сведения о квоте смотрим раньше класса исключения: RubyLLM превращает
-    # 429 со словом input_token в ContextLengthExceededError, хотя это
-    # исчерпанная токенная квота, а не слишком длинный запрос.
+    # Quota details are checked before the exception class: RubyLLM turns a
+    # 429 mentioning input_token into ContextLengthExceededError, although
+    # it is an exhausted token quota, not an oversized request.
     def classify(error)
       return :timeout if transport_timeout?(error)
       return :unhandled unless ruby_llm_error?(error)
 
-      quota_kind(error) || (overloaded?(error) ? :overloaded : :fatal)
+      quota_kind(error) || model_kind(error) || (overloaded?(error) ? :overloaded : :fatal)
     end
 
-    # Внешний Timeout.timeout и таймауты транспорта Faraday: последние не
-    # наследуют ни Timeout::Error, ни RubyLLM::Error.
+    def model_kind(error)
+      :unavailable if error.message.to_s.match?(UNAVAILABLE_MODEL_TEXT)
+    end
+
+    # The outer Timeout.timeout and Faraday's transport timeouts: the latter
+    # inherit neither Timeout::Error nor RubyLLM::Error.
     def transport_timeout?(error)
       return true if error.is_a?(Timeout::Error) || error.is_a?(Errno::ETIMEDOUT)
 
@@ -47,10 +61,10 @@ module Aireview
       defined?(RubyLLM::Error) && error.is_a?(RubyLLM::Error)
     end
 
-    # Google кладёт вид квоты в QuotaFailure.violations[].quotaId
-    # (GenerateRequestsPerDay… / …PerMinute…). Метрика free_tier_requests
-    # одна и та же у обоих, по ней не различить. Текст сообщения — запасной
-    # признак, когда тела ответа нет.
+    # Google puts the kind of quota into QuotaFailure.violations[].quotaId
+    # (GenerateRequestsPerDay… / …PerMinute…). The free_tier_requests metric
+    # is the same for both, it cannot tell them apart. The message text is
+    # the fallback signal when there is no response body.
     def quota_kind(error)
       ids = quota_ids(error)
       return daily_quota_id?(ids) ? :daily_quota : :rate_limit unless ids.empty?
@@ -86,5 +100,8 @@ module Aireview
       match = message.to_s.match(RETRY_AFTER)
       match[1].to_f if match
     end
+
+    private_class_method :model_kind, :transport_timeout?, :overloaded?, :ruby_llm_error?, :quota_kind,
+                         :daily_quota_id?, :quota_ids, :response_body
   end
 end

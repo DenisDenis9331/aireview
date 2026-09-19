@@ -3,8 +3,8 @@ require 'digest'
 require 'json'
 
 module Aireview
-  # Скрытая метка в теле заметки: по ней ревью находит собственный комментарий
-  # и понимает, менялось ли с прошлого раза то, что влияет на результат.
+  # A hidden marker in the note body: it lets the review find its own
+  # comment and tell whether anything that affects the result changed.
   module ReviewMarker
     PATTERN = /<!--\s*aireview:key=([0-9a-f]+)\s*-->/
 
@@ -19,28 +19,27 @@ module Aireview
       match && match[1]
     end
 
-    # Ключ считается от готовых промптов, а не от одного SHA: так в него сами
-    # собой попадают дифф, описание MR, контекст Jira, инструкции ревью и
-    # ignore_paths. Модели и провайдеры добавляются рядом — на промпт они не
-    # влияют, но на результат влияют.
+    # The key is computed from the assembled prompts, not from a single SHA:
+    # that way the diff, the MR description, the Jira context, the review
+    # instructions and ignore_paths enter it by themselves. What else affects
+    # the result — provider, model and temperature of the stages, the shared
+    # pool with its critique policy — is known by Config#result_signature.
+    # Without a pool the key is the same as before.
     def key(prompts:, config:)
+      signature = config.result_signature
       source = {
-        'generate' => [
-          config.generate_provider,
-          prompts[:generate_model],
-          prompts[:generate_temperature],
-          prompts[:generate_prompt]
-        ],
-        'critique' => critique_source(prompts, config)
+        'generate' => [*signature['generate'], prompts[:generate_prompt]],
+        'critique' => prompts[:critique_prompt] ? [*signature['critique'], prompts[:critique_prompt]] : nil
       }
+      source['pool'] = signature['pool'] if signature['pool']
 
       Digest::SHA256.hexdigest(JSON.generate(source))[0, 16]
     end
 
-    # То, что делает результат ревью устаревшим: новый коммит, смена целевой
-    # ветки, перебазирование со сдвигом базы сравнения, а также правка
-    # заголовка или описания — из них берутся требования, с которыми ревью
-    # сверяет код.
+    # What makes a review result stale: a new commit, a target branch change,
+    # a rebase that moves the comparison base, and an edit of the title or
+    # the description — the requirements the review checks the code against
+    # come from those.
     def state(merge_request)
       {
         'sha' => merge_request['sha'],
@@ -49,17 +48,6 @@ module Aireview
         'title' => merge_request['title'],
         'description' => merge_request['description']
       }
-    end
-
-    def critique_source(prompts, config)
-      return nil unless prompts[:critique_prompt]
-
-      [
-        config.critique_provider,
-        prompts[:critique_model],
-        prompts[:critique_temperature],
-        prompts[:critique_prompt]
-      ]
     end
   end
 end

@@ -35,8 +35,9 @@ module Aireview
       get_json('user')
     end
 
-    # Retry создаёт новый job в том же pipeline. Старые попытки видны только
-    # с include_retried; один лишь новый CI_JOB_ID бывает и после обычного push.
+    # A Retry creates a new job in the same pipeline. Earlier attempts are
+    # visible only with include_retried; a new CI_JOB_ID alone happens after an
+    # ordinary push too.
     def retried_job?(project_id, job_id)
       current = get_json("projects/#{project_id}/jobs/#{job_id}")
       validate_retry_job!(current, pipeline: true)
@@ -54,13 +55,13 @@ module Aireview
       raise ApiError, 'Too many pipeline jobs to determine whether this job is a retry'
     end
 
-    # Заметки отдаются страницами и сортируются по времени создания, а
-    # обновление комментария в этом порядке его не поднимает: на длинном MR
-    # своё ревью оказывается далеко не на первой странице. Обрывать обход молча
-    # нельзя — по неполному списку ревью решит, что заметки нет, и создаст
-    # вторую, поэтому упираемся в предел с ошибкой. Порядок задаётся явно: от
-    # него зависит, какую из старых заметок без метки подхватит ревью, и
-    # полагаться тут на дефолт API не стоит.
+    # Notes come in pages sorted by creation time, and updating a comment
+    # does not move it up in that order: on a long MR our review is far from
+    # the first page. Stopping the walk silently is not an option — with an
+    # incomplete list the review would decide the note is missing and create
+    # a second one, so the limit fails with an error. The order is explicit:
+    # it decides which old unmarked note the review picks up, and the API
+    # default is not to be relied on here.
     def fetch_merge_request_notes(project_id, iid)
       notes = []
       page = 1

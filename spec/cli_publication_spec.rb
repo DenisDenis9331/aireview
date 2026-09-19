@@ -3,8 +3,8 @@
 require 'stringio'
 require 'aireview'
 
-# Клиент GitLab, у которого merge request может «уехать» между двумя чтениями:
-# первое отдаёт исходное состояние, последующие — то, что задано в moved_to.
+# A GitLab client whose merge request can move between two reads: the first
+# read returns the original state, the following ones what moved_to says.
 class RecordingGitlabClient
   attr_reader :created, :updated
 

@@ -7,13 +7,14 @@ module Aireview
     DIFF_UNAVAILABLE = '[diff not available]'
     BINARY_DIFF = /\ABinary files .* differ/
 
-    # Один файл из ответа GitLab: заголовок, хунки и что с ним можно делать.
+    # One file from the GitLab answer: the header, the hunks and what can be done with it.
     # kind:
-    #   :text            есть хунки, код можно проверить;
-    #   :no_text_changes переименование, смена режима, пустой файл: проверять
-    #                    нечего;
-    #   :unavailable     GitLab не отдал дифф (too_large, бинарник, пустой
-    #                    дифф без причины): код есть, но проверить его не удалось.
+    #   :text            there are hunks, the code can be checked;
+    #   :no_text_changes a rename, a mode change, an empty file: nothing to
+    #                    check;
+    #   :unavailable     GitLab did not return the diff (too_large, a binary,
+    #                    an empty diff without a reason): the code exists,
+    #                    but could not be checked.
     class Entry
       attr_reader :path, :kind, :header, :hunks
 
@@ -49,9 +50,9 @@ module Aireview
 
       private
 
-      # Пустой дифф без объяснимой причины (переименование, смена режима,
-      # пустой новый или удалённый файл) считаем недоступным: код есть, но
-      # GitLab его не отдал.
+      # An empty diff without an explainable reason (a rename, a mode change,
+      # an empty new or deleted file) counts as unavailable: the code exists,
+      # but GitLab did not return it.
       def classify(change, diff)
         return :unavailable if change['too_large']
         return :unavailable if diff.match?(BINARY_DIFF)
@@ -67,8 +68,8 @@ module Aireview
         modes.none?(&:nil?) && modes.uniq.size == 2
       end
 
-      # Хунки режем по заголовкам @@; текст до первого @@ (или дифф без них,
-      # например заглушка про секретный файл) считается одним хунком.
+      # Hunks are split at the @@ headers; the text before the first @@ (or a
+      # diff without any, such as the secret-file placeholder) counts as one hunk.
       def split_hunks(diff)
         diff = "#{diff}\n" unless diff.end_with?("\n")
         pieces = diff.split(/^(?=@@ )/)

@@ -46,6 +46,7 @@ module Aireview
         diff_unavailable: 'diff not available',
         section_list: 'Truncated sections',
         fallback_used: 'Fallback model used',
+        critique_weaker: 'Critique ran on a model weaker than Generate: the findings were checked less strictly.',
         quote_missing: 'quote not found in the diff'
       },
       'ru' => {
@@ -72,6 +73,7 @@ module Aireview
         diff_unavailable: 'дифф недоступен',
         section_list: 'Усечённые секции',
         fallback_used: 'Использована резервная модель',
+        critique_weaker: 'Критика выполнена моделью слабее generate: замечания проверены менее строго.',
         quote_missing: 'цитата не найдена в диффе'
       }
     }.freeze
@@ -80,11 +82,11 @@ module Aireview
       @labels = LABELS.fetch(language.to_s) { LABELS.fetch(DEFAULT_LANGUAGE) }
     end
 
-    # coverage: факты усечения контекста от пайплайна, не текст модели.
-    # result по-прежнему про найденные проблемы; неполнота покрытия
-    # дописывается рядом с ним, чтобы строка результата не читалась как
-    # «проверено всё».
-    def render(accepted, summary:, coverage: nil, fallback_models: {})
+    # coverage: the truncation facts from the pipeline, not the model's text.
+    # result is still about the findings; incomplete coverage is written
+    # next to it so that the result line does not read as "everything was
+    # checked".
+    def render(accepted, summary:, coverage: nil, fallback_models: {}, critique_weaker: false)
       mismatches, important = select_findings(Array(accepted))
       result = mismatches.empty? && important.empty? ? 'ok' : 'needs attention'
 
@@ -104,16 +106,16 @@ module Aireview
         ## #{label(:result)}
 
         #{result}#{partial_note(coverage)}
-        #{coverage_block(coverage)}#{fallback_note(fallback_models)}
+        #{coverage_block(coverage)}#{fallback_note(fallback_models)}#{weaker_note(critique_weaker)}
         #{label(:disclaimer)}
       MARKDOWN
     end
 
     private
 
-    # Сначала отбор того, что вообще показывается, потом лимиты разделов и
-    # только затем общий лимит: находка, которую не показать из-за категории
-    # или лимита раздела, не должна занимать общий слот.
+    # First select what is shown at all, then the section limits and only
+    # then the total limit: a finding that cannot be shown because of its
+    # category or a section limit must not take a slot in the total.
     def select_findings(accepted)
       sorted = sorted_findings(accepted)
       mismatches = sorted.select { |finding| category(finding) == 'task_mismatch' }.first(MISMATCH_LIMIT)
@@ -181,8 +183,14 @@ module Aireview
       "\n## #{label(:not_reviewed)}\n\n#{lines.join("\n")}\n"
     end
 
-    # Смена ключа остаётся в логах; смена модели видна читателю, потому что
-    # запасная модель может ревьюить слабее основной.
+    # A key switch stays in the logs; a model switch is visible to the
+    # reader, because a fallback model may review less well than the primary.
+    def weaker_note(critique_weaker)
+      return '' unless critique_weaker
+
+      "\n#{label(:critique_weaker)}\n"
+    end
+
     def fallback_note(fallback_models)
       return '' if fallback_models.nil? || fallback_models.empty?
 
