@@ -4,16 +4,13 @@
 # statuses), not review quality — a 1.5b model proves nothing about that.
 # Measured on a public runner (4 CPU): the model pulls in ~10 s, both probes
 # take ~25 s, the whole job under two minutes — cheap enough to run on every
-# push like the rest of CI. The daily schedule catches changes on the Ollama
-# side (a new image, a re-published model) when nothing is pushed.
+# push like the rest of CI.
 name: Ollama check
 
 on:
   push:
   pull_request:
   workflow_dispatch:
-  schedule:
-    - cron: '17 5 * * *'
 
 permissions:
   contents: read
