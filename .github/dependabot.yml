@@ -4,6 +4,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # A release is offered only after it has been out for a week: a
+    # compromised version is usually pulled within hours or days
+    cooldown:
+      default-days: 7
     allow:
       - dependency-type: all
     groups:
@@ -17,6 +21,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Same week of cooldown; actions pinned to a commit get it via default-days
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns:
