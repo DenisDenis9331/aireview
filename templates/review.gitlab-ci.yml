@@ -28,7 +28,9 @@ variables:
 
 # The .post stage exists in every pipeline and runs last, a project does not
 # have to declare it; when: always — a review is useful with failing tests
-# too. A project can move the job by adding `aireview: {stage: ...}`.
+# too. But GitLab does not start a pipeline of .pre and .post jobs only: if
+# a project has no other merge request jobs, add review to its stages and
+# move the job with `aireview: {stage: review}` (see README).
 aireview:
   stage: .post
   rules:
