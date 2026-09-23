@@ -698,12 +698,35 @@ The template is written for shell-executor runners (the image runs through
 `docker run` with secrets passed by name) and carries `[skip review]`,
 `resource_group`, `allow_failure` and `REVIEW_MODE=once`. Models come from
 the image defaults, `.aireview.yml` is mounted into the container only when
-the project has one. The job runs in the `.post` stage — it exists in every
-pipeline, so a project does not declare `stages`; to move the review to
-another stage, add `aireview: {stage: review}` to the project file. Every
-variable the config reads (`Config.env_names`: models, providers, reserves,
-temperatures, limits, `OLLAMA_API_BASE` and so on) is passed into the
-container by name, so a project can override anything through its CI/CD
+the project has one. The job runs in the `.post` stage: it exists in every
+pipeline, so a project does not declare it.
+
+GitLab does not start a pipeline in which, after `rules` and `only` are
+applied, only `.pre` and `.post` jobs remain. That happens when a project has
+no other merge request jobs (a build that runs on tags only does not count).
+In that case add a `review` stage to the project's existing `stages`, without
+replacing them, and move the job there:
+
+```yaml
+stages:
+  - review   # added to the project's stages
+  - build
+
+aireview:
+  stage: review
+```
+
+To keep the review from waiting for other stages to finish, add `needs: []`
+to the `aireview` job.
+
+The template sets `REVIEW_MODE` as a job variable, and an environment variable
+beats `.aireview.yml`: `review_mode` in the project file has no effect once
+the template is included. Change the mode with a `REVIEW_MODE` CI/CD variable
+of the project or with `aireview: {variables: {REVIEW_MODE: update}}`.
+
+Every variable the config reads (`Config.env_names`: models, providers,
+reserves, temperatures, limits, `OLLAMA_API_BASE` and so on) is passed into
+the container by name, so a project can override anything through its CI/CD
 variables — for instance, swap an unavailable model with `LLM_CRITIQUE_MODEL`
 without waiting for an image release.
 
