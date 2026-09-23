@@ -212,16 +212,39 @@ module Aireview
       up_to_date = existing[:key] == key
       return false unless up_to_date || (mode == 'once' && !retried_ci_job?(gitlab_client))
 
-      reason = up_to_date ? 'existing review is up to date' : 'merge request already reviewed (review_mode=once)'
-      @out.puts("Review skipped: #{reason}")
+      @out.puts("Review skipped: #{skip_reason(existing, up_to_date: up_to_date, mode: mode)}")
       true
     end
 
+    # In once mode the review is not repeated on new pushes, even when the MR
+    # has changed. So besides the mode the message says whether the review is
+    # up to date: if it is not, the Retry button of the GitLab job updates it.
+    def skip_reason(existing, up_to_date:, mode:)
+      return 'existing review is up to date' unless mode == 'once'
+
+      state = if up_to_date then 'the review is up to date'
+              elsif existing[:key].nil? then "review freshness is unknown: #{update_hint}"
+              else "review inputs changed: #{update_hint}"
+              end
+      "merge request already reviewed (review_mode=once), #{state}"
+    end
+
+    def update_hint
+      ci_job_context ? 'retry the job to update' : 'use --force to review again'
+    end
+
     def retried_ci_job?(gitlab_client)
-      project_id, job_id = @env.values_at('CI_PROJECT_ID', 'CI_JOB_ID')
-      return false if Aireview::Utils.blank?(project_id) || Aireview::Utils.blank?(job_id)
+      project_id, job_id = ci_job_context
+      return false unless project_id
 
       gitlab_client.retried_job?(project_id, job_id)
+    end
+
+    def ci_job_context
+      project_id, job_id = @env.values_at('CI_PROJECT_ID', 'CI_JOB_ID')
+      return if Aireview::Utils.blank?(project_id) || Aireview::Utils.blank?(job_id)
+
+      [project_id, job_id]
     end
 
     def publish_review(review, context, publication)

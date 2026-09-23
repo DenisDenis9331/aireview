@@ -96,6 +96,8 @@ RSpec.describe 'aireview review --post' do
     instance_double(Aireview::ReviewPipeline, dry_run_prompts: prompts, run: 'review text')
   end
 
+  let(:out) { StringIO.new }
+
   def run_cli(client, *options, env: {})
     allow(Aireview::Config).to receive(:load).and_return(config)
     allow(Aireview::GitlabClient).to receive(:new).and_return(client)
@@ -103,7 +105,7 @@ RSpec.describe 'aireview review --post' do
 
     Aireview::CLI.start(
       ['review', 'https://gitlab.example.com/group/project/-/merge_requests/5', '--post', *options],
-      out: StringIO.new,
+      out: out,
       err: StringIO.new,
       env: env
     )
@@ -172,6 +174,7 @@ RSpec.describe 'aireview review --post' do
     expect(run_cli(client)).to eq(0)
     expect(client.created).to be_empty
     expect(client.updated).to be_empty
+    expect(out.string).to include('Review skipped: existing review is up to date')
   end
 
   it 'updates the existing note when the key changed' do
@@ -234,6 +237,10 @@ RSpec.describe 'aireview review --post' do
       expect(run_cli(client, env: ci_env)).to eq(0)
       expect(client.created).to be_empty
       expect(client.updated).to be_empty
+      expect(out.string).to include(
+        'Review skipped: merge request already reviewed (review_mode=once), ' \
+        'review inputs changed: retry the job to update'
+      )
     end
 
     it 'updates the existing review for changed input on a job retry' do
@@ -259,6 +266,10 @@ RSpec.describe 'aireview review --post' do
         expect(run_cli(client, env: ci_env)).to eq(0)
         expect(client.created).to be_empty
         expect(client.updated).to be_empty
+        expect(out.string).to include(
+          'Review skipped: merge request already reviewed (review_mode=once), ' \
+          'review freshness is unknown: retry the job to update'
+        )
       end
 
       it 'migrates the legacy review on retry' do
@@ -282,6 +293,9 @@ RSpec.describe 'aireview review --post' do
         expect(run_cli(client, env: ci_env)).to eq(0)
         expect(client.created).to be_empty
         expect(client.updated).to be_empty
+        expect(out.string).to include(
+          'Review skipped: merge request already reviewed (review_mode=once), the review is up to date'
+        )
       end
 
       it 'still permits an explicit force without looking up job history' do
@@ -302,6 +316,7 @@ RSpec.describe 'aireview review --post' do
         expect(run_cli(client, env: env)).to eq(0)
         expect(client.created).to be_empty
         expect(client.updated).to be_empty
+        expect(out.string).to include('review inputs changed: use --force to review again')
       end
     end
 
