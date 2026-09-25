@@ -48,13 +48,13 @@ module Aireview
     # the text is JSON, the text itself otherwise (the pipeline repairs it).
     # RubyLLM 2 always returns the text, and a Hash that breaks the schema
     # would go to a repair request instead of the next model. An empty
-    # answer stays an empty String: Message#parsed turns it into nil.
+    # answer stays an empty String (Message#parsed would turn it into nil);
+    # JSON null becomes nil, as in 1.x.
     def self.content(response)
       content = response.content
-      return content unless content.is_a?(String)
+      return content unless content.is_a?(String) && !content.empty?
 
-      parsed = response.parsed
-      parsed.nil? ? content : parsed
+      response.parsed
     rescue JSON::ParserError
       content
     end

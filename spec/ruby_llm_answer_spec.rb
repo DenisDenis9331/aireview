@@ -106,6 +106,19 @@ RSpec.describe 'RubyLLM answer through the reviewer and the pipeline' do
     ])
   end
 
+  it 'moves a JSON null answer to the next model without a repair request' do
+    answers('gemini-a' => [generate_answer], 'gemini-c1' => ['null'], 'gemini-c2' => [verdict('keep')])
+
+    result = pipeline.run(merge_request: merge_request, changes: changes)
+
+    expect(result).to include('Tax is no longer included')
+    expect(requests).to eq([
+      ['generate', 'gemini-a', :request],
+      ['critique', 'gemini-c1', :request],
+      ['critique', 'gemini-c2', :request]
+    ])
+  end
+
   it 'repairs a text that is not JSON on the same model, then moves on when the repair fails too' do
     answers('gemini-a' => [generate_answer], 'gemini-c1' => ['{"verdicts": [', 'still not json'],
             'gemini-c2' => [verdict('reject')])
@@ -121,8 +134,9 @@ RSpec.describe 'RubyLLM answer through the reviewer and the pipeline' do
     ])
   end
 
-  it 'keeps an empty answer as text, like RubyLLM 1.x' do
+  it 'reads an answer like RubyLLM 1.x: empty stays text, JSON null is nil' do
     expect(Aireview::LlmClient.content(RubyLLM::Message.new(role: :assistant, content: ''))).to eq('')
+    expect(Aireview::LlmClient.content(RubyLLM::Message.new(role: :assistant, content: 'null'))).to be_nil
     expect(Aireview::LlmClient.content(RubyLLM::Message.new(role: :assistant, content: '{"a": 1}'))).to eq('a' => 1)
     expect(Aireview::LlmClient.content(RubyLLM::Message.new(role: :assistant, content: 'text'))).to eq('text')
   end
