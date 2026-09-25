@@ -24,7 +24,7 @@
 
 variables:
   AIREVIEW_IMAGE: "registry.example.com/your-group/aireview"
-  AIREVIEW_IMAGE_TAG: "2.0.0"
+  AIREVIEW_IMAGE_TAG: "2.0.2"
 
 # The .post stage exists in every pipeline and runs last, a project does not
 # have to declare it; when: always — a review is useful with failing tests

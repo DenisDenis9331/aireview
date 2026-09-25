@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.2
 
 - When the merge request changes while the review runs, the skip warning
   names the fields that changed (`sha`, `diff_refs`, `target_branch`,
