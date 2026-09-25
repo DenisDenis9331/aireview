@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.0.2
+
+- When the merge request changes while the review runs, the skip warning
+  names the fields that changed (`sha`, `diff_refs`, `target_branch`,
+  `title`, `description`) instead of printing only the new head.
+- In `review_mode: once` the skip message names both the mode and whether
+  the review is up to date (`the review is up to date`, `review inputs
+  changed`, `review freshness is unknown`); a stale review gets a hint:
+  retry the job in CI, `--force` outside of it.
+
 ## 2.0.0
 
 Breaking: the review key of a shared pool includes the pool order and the
