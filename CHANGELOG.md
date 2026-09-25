@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.1.0
 
 - An answer that is not valid JSON and that the provider cut off at the
   output limit (`max_tokens`) or blocked (`content_filter`) sends the stage
