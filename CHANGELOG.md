@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- An answer that is not valid JSON and that the provider cut off at the
+  output limit (`max_tokens`) or blocked (`content_filter`) sends the stage
+  to the next model without a repair request: the same model would cut the
+  repair off too. The log names the reason. A valid answer is taken
+  whatever the finish reason.
+- Every LLM request logs the token counts the provider reported
+  (`tokens: input=… output=… thinking=… cache_read=… cache_write=…`), one
+  line per attempt; cache counts only when not zero. They are not summed:
+  Gemini already counts thinking into output, and input leaves out cached
+  tokens, so the prompt size is input + cache_read + cache_write.
 - RubyLLM 2.0 (was 1.16). Output schemas are built with Schematist, which
   RubyLLM now ships instead of `ruby_llm-schema`; `json` goes back to 2.x,
   RubyLLM 2.0 requires `json < 3`.
