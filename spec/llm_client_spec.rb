@@ -23,8 +23,8 @@ RSpec.describe Aireview::LlmClient do
   let(:response) { instance_double('RubyLLM::Message', content: 'body') }
   let(:context_config_class) do
     Struct.new(:http_proxy, :request_timeout, :max_retries, :gemini_api_key, :gemini_api_base, :ollama_api_base,
-               :openai_api_key, :openai_api_base, :openrouter_api_key, :openrouter_api_base, :anthropic_api_key,
-               keyword_init: true)
+               :openai_api_key, :openai_api_base, :openai_protocol, :openrouter_api_key, :openrouter_api_base,
+               :anthropic_api_key, keyword_init: true)
   end
   let(:prompt) do
     described_class::Prompt.new(stage: 'generate', system: 'system prompt', user: 'user prompt',
@@ -147,7 +147,9 @@ RSpec.describe Aireview::LlmClient do
                                                           openrouter_api_base: 'https://llm.example.test')
       expect(context_configs[0].gemini_api_key).to be_nil
       expect(context_configs[1].to_h.compact).to include(openai_api_key: 'openai-key',
-                                                          openai_api_base: 'https://llm.example.test')
+                                                          openai_api_base: 'https://llm.example.test',
+                                                          openai_protocol: :chat_completions)
+      expect(context_configs[0].openai_protocol).to be_nil
       expect(contexts[0]).to have_received(:chat).with(model: 'openrouter/auto', provider: :openrouter)
     end
 

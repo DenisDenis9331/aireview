@@ -26,7 +26,7 @@ RSpec.shared_context 'LLM errors' do
         ]
       }
     }
-    error_class.new(Struct.new(:body).new(JSON.generate(body)), message)
+    error_class.new(message, response: Struct.new(:body).new(JSON.generate(body)))
   end
 
   def daily_quota_error

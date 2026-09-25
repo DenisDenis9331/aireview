@@ -62,7 +62,7 @@ module Aireview
         @client.request(prompt, candidate: route.candidate, key: route.key, key_index: route.key_index,
                                 timeout: timeout)
       end
-      response.content
+      LlmClient.content(response)
     rescue RouteExhaustedError => e
       raise RepairImpossibleError, e.message
     end
