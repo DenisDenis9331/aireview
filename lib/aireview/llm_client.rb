@@ -1,4 +1,5 @@
 # frozen_string_literal: true
+require 'json'
 require 'timeout'
 require_relative 'errors'
 require_relative 'utils'
@@ -22,8 +23,8 @@ module Aireview
       @contexts = {}
     end
 
-    # Returns the RubyLLM answer (content is text or a structure by the
-    # schema). A request error is re-raised as is — LlmFailure classifies it.
+    # Returns the RubyLLM answer; read it with LlmClient.content. A request
+    # error is re-raised as is — LlmFailure classifies it.
     def request(prompt, candidate:, key:, timeout:, key_index: 0)
       load_ruby_llm
       stage = prompt.stage.to_s
@@ -41,6 +42,21 @@ module Aireview
     rescue Timeout::Error
       @logger.warn("LLM #{stage} request timed out after #{timeout.round} seconds (model=#{model})")
       raise
+    end
+
+    # The answer as RubyLLM 1.x gave it under a schema: the parsed JSON when
+    # the text is JSON, the text itself otherwise (the pipeline repairs it).
+    # RubyLLM 2 always returns the text, and a Hash that breaks the schema
+    # would go to a repair request instead of the next model. An empty
+    # answer stays an empty String: Message#parsed turns it into nil.
+    def self.content(response)
+      content = response.content
+      return content unless content.is_a?(String)
+
+      parsed = response.parsed
+      parsed.nil? ? content : parsed
+    rescue JSON::ParserError
+      content
     end
 
     private
@@ -103,8 +119,11 @@ module Aireview
       end
     end
 
+    # RubyLLM 2 sends OpenAI requests to the Responses API; a compatible
+    # server behind LLM_API_BASE usually has Chat Completions only.
     def configure_remote_provider(ruby_config, provider, api_key)
       ruby_config.public_send("#{provider}_api_key=", api_key)
+      ruby_config.openai_protocol = :chat_completions if provider == 'openai'
       return unless Aireview::Utils.present?(@config.llm_api_base)
 
       ruby_config.public_send("#{provider}_api_base=", @config.llm_api_base)

@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- RubyLLM 2.0 (was 1.16). Output schemas are built with Schematist, which
+  RubyLLM now ships instead of `ruby_llm-schema`; `json` goes back to 2.x,
+  RubyLLM 2.0 requires `json < 3`.
+- A structured answer is read as with RubyLLM 1.16: JSON that breaks the
+  schema sends the stage to the next model at once, only a text that is not
+  JSON gets a repair request.
+- OpenAI stays on Chat Completions: RubyLLM 2.0 would switch it to the
+  Responses API, which a compatible server behind `LLM_API_BASE` usually
+  lacks.
+- The critique schema goes to Chat Completions providers (Ollama,
+  OpenRouter, OpenAI) with `strict: false`: its `refinement` is optional,
+  and OpenAI strict mode rejects optional properties. Generate stays strict;
+  Gemini gets no strict flag, as before.
+
 ## 2.0.2
 
 - When the merge request changes while the review runs, the skip warning

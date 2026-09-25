@@ -111,7 +111,7 @@ module Aireview
         schema: stage == 'critique' ? CritiqueOutputSchema : GenerateOutputSchema
       )
       key = @config.provider_api_keys(candidate.provider).first
-      @client.request(request, candidate: candidate, key: key, timeout: @config.llm_timeout.to_f).content
+      LlmClient.content(@client.request(request, candidate: candidate, key: key, timeout: @config.llm_timeout.to_f))
     end
 
     # missing — the provider has no such model; unverified — the provider

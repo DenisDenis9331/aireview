@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-require 'ruby_llm/schema'
+require 'schematist'
 
 module Aireview
   module OutputSchemaValues
@@ -18,7 +18,7 @@ module Aireview
     DECISIONS = %w[keep reject].freeze
   end
 
-  class GenerateOutputSchema < RubyLLM::Schema
+  class GenerateOutputSchema < Schematist::Schema
     string :summary
     array :candidates, max_items: 3 do
       object do
@@ -38,7 +38,7 @@ module Aireview
     end
   end
 
-  class CritiqueOutputSchema < RubyLLM::Schema
+  class CritiqueOutputSchema < Schematist::Schema
     array :verdicts do
       object do
         string :id

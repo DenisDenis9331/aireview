@@ -248,7 +248,7 @@ A local Ollama needs no API key. The providers can be swapped by changing
 `LLM_GENERATE_PROVIDER`, `LLM_CRITIQUE_PROVIDER` and the corresponding models.
 To run both stages locally, set `ollama` in both provider variables. The
 address with `/v1` matches the
-[Ollama configuration in RubyLLM](https://rubyllm.com/configuration/#provider-configuration).
+[Ollama configuration in RubyLLM](https://rubyllm.com/configuration-providers/).
 `LLM_TIMEOUT` sets the timeout of every LLM request in seconds; for a slow
 local model it can be raised, but not without limit: a hung request holds
 the job for exactly that long while a fallback model sits idle. An

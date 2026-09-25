@@ -62,7 +62,7 @@ RSpec.describe Aireview::ModelChecker do
       answer = answers.fetch([candidate.model, prompt.stage]).shift
       raise answer if answer.is_a?(Exception)
 
-      instance_double('RubyLLM::Message', content: answer)
+      RubyLLM::Message.new(role: :assistant, content: answer)
     end
   end
 
