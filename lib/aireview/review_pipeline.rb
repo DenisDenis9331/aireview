@@ -26,6 +26,11 @@ module Aireview
     DRY_RUN_CANDIDATES_JSON = '[{"id":"C1","file":"path/from/diff.rb","line":1,' \
                               '"quoted_code":"...","problem":"...","why":"...","suggestion":"...",' \
                               '"category":"bug","severity":"major"}]'
+    # Finish reasons after which an unparsable answer gets no repair.
+    CUT_OFF_REASONS = {
+      max_tokens: 'cut off at the output limit (max_tokens)',
+      content_filter: 'blocked by the provider (content_filter)'
+    }.freeze
 
     def initialize(config:, reviewer: nil, context_builder: nil, logger: Logger.new($stderr))
       @config = config
@@ -214,6 +219,7 @@ module Aireview
     def parse_string_with_repair(raw:, kind:, expected:, repair_stage:, critique_candidate_ids: nil)
       parse_expected_result(raw, expected, critique_candidate_ids: critique_candidate_ids)
     rescue JSON::ParserError, SchemaError => e
+      raise_if_cut_off(stage: repair_stage, kind: kind, error: e)
       @logger.warn("Invalid #{kind} JSON, requesting one repair: #{e.message}")
       repaired = repair_json(
         raw: raw,
@@ -225,8 +231,17 @@ module Aireview
       begin
         parse_expected_result(repaired, expected, critique_candidate_ids: critique_candidate_ids)
       rescue JSON::ParserError, SchemaError => second_error
+        raise_if_cut_off(stage: repair_stage, kind: "#{kind} repair", error: second_error)
         raise ParseError, "LLM returned invalid #{kind} JSON after repair: #{second_error.message}"
       end
+    end
+
+    # An answer the provider cut off or blocked is not a JSON mistake: the
+    # same model would cut the repair off too, so the stage goes to the next
+    # model at once. A valid answer is taken whatever the reason.
+    def raise_if_cut_off(stage:, kind:, error:)
+      reason = CUT_OFF_REASONS[@reviewer.finish_reason(stage)]
+      raise ParseError, "LLM #{kind} was #{reason}: #{error.message}" if reason
     end
 
     def parse_expected_result(raw, expected, critique_candidate_ids: nil)

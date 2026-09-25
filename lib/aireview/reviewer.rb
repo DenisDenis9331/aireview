@@ -16,6 +16,7 @@ module Aireview
       @logger = logger
       @router = router || LlmRouter.new(config: config, logger: logger)
       @client = client || LlmClient.new(config: config, logger: logger)
+      @finish_reasons = {}
     end
 
     # pinned — a request only to the model that answered last in the stage
@@ -47,6 +48,12 @@ module Aireview
       @router.critique_weaker?
     end
 
+    # Why the last answer of the stage stopped (:stop, :max_tokens,
+    # :content_filter…), nil when the provider did not say or no answer came.
+    def finish_reason(stage)
+      @finish_reasons[stage.to_s]
+    end
+
     # An invalid result: the model is excluded for the stage, the next
     # request of the stage goes to another. Returns the excluded model or nil.
     def exclude_answered_model(stage:, reason:)
@@ -58,10 +65,12 @@ module Aireview
     # A pinned route giving up is not an API error for the pipeline but
     # "repair impossible": the same fate as an invalid result.
     def call_llm(prompt, pinned:)
+      @finish_reasons.delete(prompt.stage)
       response = @router.call(stage: prompt.stage, request_chars: prompt.chars, pinned: pinned) do |route, timeout|
         @client.request(prompt, candidate: route.candidate, key: route.key, key_index: route.key_index,
                                 timeout: timeout)
       end
+      @finish_reasons[prompt.stage] = response.finish_reason
       LlmClient.content(response)
     rescue RouteExhaustedError => e
       raise RepairImpossibleError, e.message

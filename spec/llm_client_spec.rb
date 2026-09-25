@@ -20,7 +20,9 @@ RSpec.describe Aireview::LlmClient do
   let(:context_configs) { [] }
   let(:contexts) { [] }
   let(:chat) { instance_double('RubyLLM::Chat') }
-  let(:response) { instance_double('RubyLLM::Message', content: 'body') }
+  let(:response) do
+    RubyLLM::Message.new(role: :assistant, content: 'body', input_tokens: 1200, output_tokens: 300, thinking_tokens: 80)
+  end
   let(:context_config_class) do
     Struct.new(:http_proxy, :request_timeout, :max_retries, :gemini_api_key, :gemini_api_base, :ollama_api_base,
                :openai_api_key, :openai_api_base, :openai_protocol, :openrouter_api_key, :openrouter_api_base,
@@ -67,7 +69,26 @@ RSpec.describe Aireview::LlmClient do
     expect(chat).to have_received(:with_instructions).with('system prompt')
     expect(Timeout).to have_received(:timeout).with(45.0)
     expect(log_output.string).to include('LLM generate request started (model=gemini-3.7-flash, temperature=0.3)')
-    expect(log_output.string).to include('LLM generate request completed (model=gemini-3.7-flash)')
+    expect(log_output.string).to include(
+      'LLM generate request completed (model=gemini-3.7-flash, tokens: input=1200 output=300 thinking=80)'
+    )
+  end
+
+  # One line per attempt, as the provider reported: Gemini counts thinking
+  # into output already, so nothing is summed; a missing count is left out.
+  it 'logs only the token counts the provider reported' do
+    allow(chat).to receive(:ask).and_return(
+      RubyLLM::Message.new(role: :assistant, content: 'body', input_tokens: 900, output_tokens: 40),
+      RubyLLM::Message.new(role: :assistant, content: 'body')
+    )
+
+    request(candidate: candidate('ollama', 'qwen2.5-coder:7b'), key: nil)
+    request(candidate: candidate('ollama', 'qwen2.5-coder:7b'), key: nil)
+
+    expect(log_output.string).to include(
+      'LLM generate request completed (model=qwen2.5-coder:7b, tokens: input=900 output=40)'
+    )
+    expect(log_output.string).to include("LLM generate request completed (model=qwen2.5-coder:7b)\n")
   end
 
   it 'builds an isolated context with the key, base, proxy and timeout, and leaves retries to the router' do

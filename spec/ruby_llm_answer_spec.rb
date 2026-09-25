@@ -1,4 +1,5 @@
 require 'json'
+require 'stringio'
 require 'aireview/review_pipeline'
 require 'aireview/stage_chains'
 
@@ -37,7 +38,8 @@ RSpec.describe 'RubyLLM answer through the reviewer and the pipeline' do
       'critique' => [candidate('gemini-c1'), candidate('gemini-c2')]
     )
   end
-  let(:logger) { Logger.new(nil) }
+  let(:log_output) { StringIO.new }
+  let(:logger) { Logger.new(log_output) }
   let(:router) do
     Aireview::LlmRouter.new(config: config, routing: routing, logger: logger, clock: -> { 0.0 }, sleeper: ->(_) {})
   end
@@ -71,12 +73,20 @@ RSpec.describe 'RubyLLM answer through the reviewer and the pipeline' do
     JSON.generate(verdicts: [{id: 'C1', decision: decision, reason: 'checked against the diff'}])
   end
 
-  # "model → answers"; every request is recorded as [stage, model, :repair?].
+  # An answer that stopped for a reason other than the end of the text.
+  def stopped(content, reason)
+    {content: content, finish_reason: reason}
+  end
+
+  # "model → answers" (a text, or a Hash with the finish reason); every
+  # request is recorded as [stage, model, :repair?].
   def answers(script)
     allow(client).to receive(:request) do |prompt, candidate:, **|
       repair = prompt.user.start_with?('The previous')
       requests << [prompt.stage, candidate.model, repair ? :repair : :request]
-      RubyLLM::Message.new(role: :assistant, content: script.fetch(candidate.model).shift)
+      answer = script.fetch(candidate.model).shift
+      answer = {content: answer} unless answer.is_a?(Hash)
+      RubyLLM::Message.new(role: :assistant, **answer)
     end
   end
 
@@ -132,6 +142,65 @@ RSpec.describe 'RubyLLM answer through the reviewer and the pipeline' do
       ['critique', 'gemini-c1', :repair],
       ['critique', 'gemini-c2', :request]
     ])
+  end
+
+  it 'moves an answer cut off at the output limit to the next model without a repair request' do
+    answers('gemini-a' => [generate_answer],
+            'gemini-c1' => [stopped('{"verdicts": [{"id": "C1", "deci', :max_tokens)],
+            'gemini-c2' => [verdict('keep')])
+
+    result = pipeline.run(merge_request: merge_request, changes: changes)
+
+    expect(result).to include('Tax is no longer included')
+    expect(requests).to eq([
+      ['generate', 'gemini-a', :request],
+      ['critique', 'gemini-c1', :request],
+      ['critique', 'gemini-c2', :request]
+    ])
+    expect(log_output.string).to include('critique result was cut off at the output limit (max_tokens)')
+    expect(log_output.string).not_to include('requesting one repair')
+  end
+
+  it 'moves an empty answer blocked by the provider to the next model without a repair request' do
+    answers('gemini-a' => [generate_answer], 'gemini-c1' => [stopped('', :content_filter)],
+            'gemini-c2' => [verdict('keep')])
+
+    result = pipeline.run(merge_request: merge_request, changes: changes)
+
+    expect(result).to include('Tax is no longer included')
+    expect(requests).to eq([
+      ['generate', 'gemini-a', :request],
+      ['critique', 'gemini-c1', :request],
+      ['critique', 'gemini-c2', :request]
+    ])
+    expect(log_output.string).to include('critique result was blocked by the provider (content_filter)')
+  end
+
+  it 'takes a valid answer whatever the finish reason' do
+    answers('gemini-a' => [stopped(generate_answer, :max_tokens)],
+            'gemini-c1' => [stopped(verdict('keep'), :max_tokens)])
+
+    result = pipeline.run(merge_request: merge_request, changes: changes)
+
+    expect(result).to include('Tax is no longer included')
+    expect(requests).to eq([%w[generate gemini-a], %w[critique gemini-c1]].map { |call| [*call, :request] })
+  end
+
+  it 'moves on when the repair itself is cut off at the output limit' do
+    answers('gemini-a' => [generate_answer],
+            'gemini-c1' => ['{"verdicts": [', stopped('{"verdicts": [{"id": "C1"', :max_tokens)],
+            'gemini-c2' => [verdict('keep')])
+
+    result = pipeline.run(merge_request: merge_request, changes: changes)
+
+    expect(result).to include('Tax is no longer included')
+    expect(requests).to eq([
+      ['generate', 'gemini-a', :request],
+      ['critique', 'gemini-c1', :request],
+      ['critique', 'gemini-c1', :repair],
+      ['critique', 'gemini-c2', :request]
+    ])
+    expect(log_output.string).to include('critique result repair was cut off at the output limit (max_tokens)')
   end
 
   it 'reads an answer like RubyLLM 1.x: empty stays text, JSON null is nil' do

@@ -37,7 +37,7 @@ module Aireview
         .with_schema(prompt.schema)
       chat.with_instructions(prompt.system)
       response = Timeout.timeout(timeout) { chat.ask(prompt.user) }
-      @logger.info("LLM #{stage} request completed (model=#{model})")
+      @logger.info("LLM #{stage} request completed (model=#{model}#{token_counts(response)})")
       response
     rescue Timeout::Error
       @logger.warn("LLM #{stage} request timed out after #{timeout.round} seconds (model=#{model})")
@@ -60,6 +60,16 @@ module Aireview
     end
 
     private
+
+    # Token counts as the provider reported them, one line per attempt. They
+    # are not summed: Gemini already counts thinking into output.
+    def token_counts(response)
+      tokens = response.tokens
+      counts = {input: tokens.input, output: tokens.output, thinking: tokens.thinking}.compact
+      return '' if counts.empty?
+
+      ", tokens: #{counts.map { |name, count| "#{name}=#{count}" }.join(' ')}"
+    end
 
     def load_ruby_llm
       require 'ruby_llm'
