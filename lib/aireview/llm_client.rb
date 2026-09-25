@@ -62,10 +62,14 @@ module Aireview
     private
 
     # Token counts as the provider reported them, one line per attempt. They
-    # are not summed: Gemini already counts thinking into output.
+    # are not summed: Gemini already counts thinking into output. Input is
+    # what was not read from or written to a cache; the prompt size is
+    # input + cache_read + cache_write, and a retry of the same prompt on
+    # Gemini is often served from its implicit cache.
     def token_counts(response)
       tokens = response.tokens
-      counts = {input: tokens.input, output: tokens.output, thinking: tokens.thinking}.compact
+      cached = {cache_read: tokens.cache_read, cache_write: tokens.cache_write}.reject { |_, count| count.to_i.zero? }
+      counts = {input: tokens.input, output: tokens.output, thinking: tokens.thinking}.compact.merge(cached)
       return '' if counts.empty?
 
       ", tokens: #{counts.map { |name, count| "#{name}=#{count}" }.join(' ')}"

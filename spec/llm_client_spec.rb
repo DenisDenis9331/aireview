@@ -75,18 +75,27 @@ RSpec.describe Aireview::LlmClient do
   end
 
   # One line per attempt, as the provider reported: Gemini counts thinking
-  # into output already, so nothing is summed; a missing count is left out.
+  # into output already, so nothing is summed; a missing count is left out,
+  # an empty cache too. Input excludes cached tokens, hence cache_read.
   it 'logs only the token counts the provider reported' do
     allow(chat).to receive(:ask).and_return(
-      RubyLLM::Message.new(role: :assistant, content: 'body', input_tokens: 900, output_tokens: 40),
-      RubyLLM::Message.new(role: :assistant, content: 'body')
+      RubyLLM::Message.new(role: :assistant, content: 'body', input_tokens: 900, output_tokens: 40,
+                                                              cache_read_tokens: 0, cache_write_tokens: 0),
+      RubyLLM::Message.new(role: :assistant, content: 'body'),
+      RubyLLM::Message.new(role: :assistant, content: 'body', input_tokens: 100, output_tokens: 300,
+                                                              thinking_tokens: 80, cache_read_tokens: 1100)
     )
 
     request(candidate: candidate('ollama', 'qwen2.5-coder:7b'), key: nil)
     request(candidate: candidate('ollama', 'qwen2.5-coder:7b'), key: nil)
+    request
 
     expect(log_output.string).to include(
       'LLM generate request completed (model=qwen2.5-coder:7b, tokens: input=900 output=40)'
+    )
+    expect(log_output.string).to include(
+      'LLM generate request completed (model=gemini-3.7-flash, tokens: input=100 output=300 thinking=80 ' \
+      'cache_read=1100)'
     )
     expect(log_output.string).to include("LLM generate request completed (model=qwen2.5-coder:7b)\n")
   end
