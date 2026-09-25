@@ -97,6 +97,7 @@ RSpec.describe 'aireview review --post' do
   end
 
   let(:out) { StringIO.new }
+  let(:err) { StringIO.new }
 
   def run_cli(client, *options, env: {})
     allow(Aireview::Config).to receive(:load).and_return(config)
@@ -106,7 +107,7 @@ RSpec.describe 'aireview review --post' do
     Aireview::CLI.start(
       ['review', 'https://gitlab.example.com/group/project/-/merge_requests/5', '--post', *options],
       out: out,
-      err: StringIO.new,
+      err: err,
       env: env
     )
   end
@@ -137,6 +138,7 @@ RSpec.describe 'aireview review --post' do
 
     expect(run_cli(client)).to eq(0)
     expect(client.created).to be_empty
+    expect(err.string).to include('Merge request changed while review was running (sha); skipping publication')
   end
 
   it 'skips publication when the requirements in the description change while the review runs' do
@@ -148,6 +150,23 @@ RSpec.describe 'aireview review --post' do
 
     expect(run_cli(client)).to eq(0)
     expect(client.created).to be_empty
+    expect(err.string).to include('while review was running (description); skipping publication')
+  end
+
+  it 'lists every changed field when several change while the review runs' do
+    client = RecordingGitlabClient.new(
+      merge_request: merge_request,
+      changes: changes,
+      moved_to: merge_request.merge(
+        'sha' => 'newsha',
+        'diff_refs' => {'base_sha' => 'basesha', 'head_sha' => 'newsha'},
+        'description' => 'Требования: таймауты не нужны'
+      )
+    )
+
+    expect(run_cli(client)).to eq(0)
+    expect(client.created).to be_empty
+    expect(err.string).to include('while review was running (sha, diff_refs, description); skipping publication')
   end
 
   it 'skips publication when the title changes while the review runs' do

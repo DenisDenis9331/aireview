@@ -268,10 +268,13 @@ module Aireview
         context[:parser_result].project_id,
         context[:parser_result].iid
       )
-      return false if ReviewMarker.state(current) == ReviewMarker.state(context[:merge_request])
+      before = ReviewMarker.state(context[:merge_request])
+      after = ReviewMarker.state(current)
+      changed = after.keys.reject { |field| after[field] == before[field] }
+      return false if changed.empty?
 
-      @logger.warn("Merge request moved to #{current['sha']} (#{current['target_branch']}) " \
-                   'while review was running; skipping publication')
+      @logger.warn("Merge request changed while review was running (#{changed.join(', ')}); " \
+                   'skipping publication')
       true
     end
 
