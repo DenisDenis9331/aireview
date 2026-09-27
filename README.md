@@ -226,6 +226,12 @@ or without auth when that is not set, and needs no key to start. Without an
 `api_base` a model goes to its provider's API, or to `LLM_API_BASE` for
 Gemini, OpenAI and OpenRouter as before.
 
+A stage's temperature goes only to the models that take one: OpenAI
+reasoning models (`o1`, `o3`, `gpt-5`…) and search models
+(`gpt-4o-search-preview`…) accept no other, so they get none and run with
+their own default. The RubyLLM registry decides, and the name
+for a model it does not know.
+
 Instead of an LLM the critic can be Jev (see "Critique engine").
 
 ### Local Ollama
