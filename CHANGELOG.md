@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Jev shadow mode (`llm.jev.shadow`, `LLM_JEV_SHADOW`, key `JEV_API_KEY`):
+  after the LLM Critique the same candidates go to Jev (TypeSafe), a fast
+  classifier, and its keep/reject/unverifiable decisions with the raw
+  probabilities are logged next to the Critique verdicts. The report and the
+  review key do not change; a Jev failure is a warning. The data is for
+  choosing between an LLM and Jev as the critic later.
+- The gem now packages `lib/**/*.yml` (the Jev questions).
+
 ## 2.1.0
 
 - An answer that is not valid JSON and that the provider cut off at the

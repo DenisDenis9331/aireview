@@ -41,8 +41,16 @@ module Aireview
         @out.puts('Critique: disabled')
       end
       @out.puts("Critique rule: #{dry_run[:critique_rule]}") if dry_run[:critique_rule]
+      render_jev_shadow(dry_run[:jev_shadow])
       render_reserves(dry_run)
       list('warnings', dry_run[:warnings], separator: "\n  ")
+    end
+
+    def render_jev_shadow(jev)
+      return unless jev
+
+      thresholds = jev[:thresholds].map { |name, value| "#{name}=#{value}" }.join(' ')
+      @out.puts("Jev shadow: #{jev[:model]} (key #{jev[:key] ? 'set' : 'missing'}; log only, #{thresholds})")
     end
 
     def render_config_paths(paths)

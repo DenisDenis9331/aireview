@@ -29,7 +29,8 @@ RSpec.describe 'RubyLLM answer through the reviewer and the pipeline' do
       llm_timeout: 60,
       llm_time_budget: 1_800,
       overloaded_quarantine: 120,
-      provider_api_keys: ['key-one']
+      provider_api_keys: ['key-one'],
+      jev_shadow?: false
     )
   end
   let(:routing) do

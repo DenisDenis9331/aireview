@@ -522,6 +522,60 @@ Critique receives the result of the check in the candidate's `note` field
 and decides keep/reject with it in mind. With `--no-critique` the check works
 the same way, its marks just go straight to the report.
 
+### Jev shadow (experiment)
+
+[Jev](https://docs.typesafe.ai) (TypeSafe) is a classifier, not a text model:
+it answers yes/no and choice questions about a given state with
+probabilities, in well under a second and for a fraction of an LLM request.
+It cannot rewrite a finding, so it can at most decide keep/reject. Before it
+is allowed to decide anything, it runs in shadow mode: after the LLM
+Critique the same candidates go to Jev, and its decisions are logged next to
+the Critique verdicts. The report and the review key do not change.
+
+```yaml
+llm:
+  jev:
+    shadow: true          # LLM_JEV_SHADOW=true
+    model: jev-1.13.0     # LLM_JEV_MODEL; a pinned version, not jev-latest
+    timeout: 10           # seconds per request
+    keep_above: 0.5       # provisional thresholds, only for the log line
+    enough_context: 0.5
+    version_claim: 0.5
+    duplicate: 0.5
+```
+
+The key is `JEV_API_KEY`. For every candidate Jev is asked whether it is a
+real, well-supported problem (the rules of `prompts/critique.txt`, asked in
+`prompts/jev_questions.yml`), whether the state holds enough to judge it,
+whether it claims that a version does not exist, which other candidate it
+duplicates, and how severe it is. The log gets one line per candidate and a
+summary:
+
+```
+Jev shadow C1: keep (real issue; real_issue=0.91 enough_context=0.88 version_claim=0.02 duplicate_of=none/0.97 severity=major/0.74), critique: keep
+Jev shadow: agrees with critique on 2 of 2 decided candidate(s); keep 1, reject 1, unverifiable 1 (model=jev-1.13.0, requests=1, 0.4s)
+```
+
+The readable lines round the numbers; a third line, `Jev shadow data: {…}`,
+carries every decision with the probabilities exactly as Jev returned them,
+so thresholds can be chosen from the logs afterwards. The version that
+answered is logged too, and a pinned version answering as another one is a
+warning. A Jev failure (network, 429/529 after
+one retry, an invalid answer, no key) is a warning and never affects the
+review. Jev goes out through `LLM_HTTP_PROXY` like the LLM providers.
+
+What leaves for TypeSafe: the MR title and description, the Jira section,
+`review_instructions`, the diff shown to the models and the candidates, after
+the same secret scrubbing as the LLM prompts. Jev limits a request to 32k
+tokens for the state plus the longest question and 64k for the state plus all
+questions; the state is cut to what the questions leave (the diff first, then
+the MR and Jira sections, never the candidates and the hunks they point at),
+and when the candidates do not fit together, each goes in a request of its
+own. The size is estimated from characters; if Jev still rejects a request
+as too large (a 422 that explicitly says it exceeds a limit), its candidates
+are asked about one by one, and one that is too large alone stays
+unverifiable. Any other 422 is not retried.
+
 ## Usage
 
 ```bash

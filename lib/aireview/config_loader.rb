@@ -26,7 +26,8 @@ module Aireview
       'review_mode' => 'REVIEW_MODE',
       'llm_api_base' => 'LLM_API_BASE',
       'ollama_api_base' => 'OLLAMA_API_BASE',
-      'llm_http_proxy' => 'LLM_HTTP_PROXY'
+      'llm_http_proxy' => 'LLM_HTTP_PROXY',
+      'jev_api_key' => 'JEV_API_KEY'
     }.freeze
     PROVIDER_KEY_MAPPING = {'gemini' => 'GEMINI_API_KEY'}.freeze
     PROVIDER_KEYS_MAPPING = {'gemini' => 'GEMINI_API_KEYS'}.freeze
@@ -38,7 +39,7 @@ module Aireview
     }.freeze
     LLM_ENV = %w[
       LLM_PROVIDER LLM_TEMPERATURE LLM_TIMEOUT LLM_MAX_PROMPT_CHARS LLM_TIME_BUDGET LLM_OVERLOADED_QUARANTINE
-      LLM_MODELS LLM_CRITIQUE_RANK LLM_CRITIQUE_ALLOW_WEAKER
+      LLM_MODELS LLM_CRITIQUE_RANK LLM_CRITIQUE_ALLOW_WEAKER LLM_JEV_SHADOW LLM_JEV_MODEL
     ].freeze
     LLM_STAGE_ENV_SUFFIXES = %w[PROVIDER MODEL TEMPERATURE MAX_PROMPT_CHARS FALLBACK_MODEL START].freeze
     IMAGE_DEFAULTS_ENV = 'AIREVIEW_DEFAULTS'
@@ -141,8 +142,17 @@ module Aireview
         'time_budget' => parse_integer(env['LLM_TIME_BUDGET'], 'LLM_TIME_BUDGET'),
         'overloaded_quarantine' => parse_integer(env['LLM_OVERLOADED_QUARANTINE'], 'LLM_OVERLOADED_QUARANTINE'),
         'generate' => llm_stage_env_config(env, 'GENERATE'),
-        'critique' => llm_stage_env_config(env, 'CRITIQUE')
-      }.compact.reject { |key, value| %w[generate critique].include?(key) && value.empty? }
+        'critique' => llm_stage_env_config(env, 'CRITIQUE'),
+        'jev' => jev_env_config(env)
+      }.compact.reject { |key, value| %w[generate critique jev].include?(key) && value.empty? }
+    end
+
+    # LLM_JEV_SHADOW=true|false, LLM_JEV_MODEL — a pinned Jev version.
+    def jev_env_config(env)
+      {
+        'shadow' => parse_boolean(env['LLM_JEV_SHADOW'], 'LLM_JEV_SHADOW'),
+        'model' => Aireview::Utils.presence(env['LLM_JEV_MODEL'])
+      }.compact
     end
 
     def llm_stage_env_config(env, stage)

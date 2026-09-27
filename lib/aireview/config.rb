@@ -6,6 +6,7 @@ require_relative 'errors'
 require_relative 'utils'
 require_relative 'config_limits'
 require_relative 'config_fallbacks'
+require_relative 'config_jev'
 require_relative 'config_layers'
 require_relative 'config_loader'
 
@@ -16,6 +17,7 @@ module Aireview
   class Config
     include ConfigLimits
     include ConfigFallbacks
+    include ConfigJev
     include ConfigLayers
 
     DEFAULT_SECRET_FILES = [

@@ -22,8 +22,9 @@ module Aireview
     CANDIDATES_RESERVE_CHARS = 4_500
 
     # The context of one run: both stages get the same MR, Jira and diff,
-    # truncated once for the tightest of the stages.
-    Context = Struct.new(:user_prompt, :diff_text, :coverage, :sizes, keyword_init: true)
+    # truncated once for the tightest of the stages. sections — the MR and
+    # Jira part without the diff, for Jev.
+    Context = Struct.new(:user_prompt, :sections, :diff_text, :coverage, :sizes, keyword_init: true)
 
     def initialize(config:, logger: Logger.new($stderr))
       @config = config
@@ -49,7 +50,8 @@ module Aireview
 
       sizes = context_sizes(fixed: fixed, packed: packed, budget: budget, diff_budget: diff_budget, critique: critique)
       log_sizes(sizes)
-      Context.new(user_prompt: fixed + packed.text, diff_text: packed.text, coverage: coverage, sizes: sizes)
+      Context.new(user_prompt: fixed + packed.text, sections: sections.join("\n\n"), diff_text: packed.text,
+                  coverage: coverage, sizes: sizes)
     end
 
     def build_generate_prompt(context)
@@ -86,6 +88,10 @@ module Aireview
       end
 
       {system_prompt: system, user_prompt: user}
+    end
+
+    def scrub_text(text)
+      @secret_scrubber.scrub_text(text.to_s)
     end
 
     private
@@ -185,10 +191,6 @@ module Aireview
     def scrub_optional_text(text)
       scrubbed = scrub_text(text)
       Aireview::Utils.presence(scrubbed) || '(empty)'
-    end
-
-    def scrub_text(text)
-      @secret_scrubber.scrub_text(text.to_s)
     end
 
     def language_name(code)

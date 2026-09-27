@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 require 'json'
 require_relative 'errors'
+require_relative 'utils'
 require_relative 'stages'
 require_relative 'context_builder'
 require_relative 'candidate_checker'
@@ -8,6 +9,7 @@ require_relative 'result_parser'
 require_relative 'review_renderer'
 require_relative 'review_schemas'
 require_relative 'reviewer'
+require_relative 'jev_shadow'
 
 module Aireview
   # A review run: context → Generate → anchoring check against the diff →
@@ -32,11 +34,13 @@ module Aireview
       content_filter: 'blocked by the provider (content_filter)'
     }.freeze
 
-    def initialize(config:, reviewer: nil, context_builder: nil, logger: Logger.new($stderr))
+    def initialize(config:, reviewer: nil, context_builder: nil, jev_shadow: nil, logger: Logger.new($stderr))
       @config = config
       @parser = ResultParser.new
       @reviewer = reviewer || Reviewer.new(config: config, logger: logger)
       @context_builder = context_builder || ContextBuilder.new(config: config, logger: logger)
+      @jev_shadow = jev_shadow ||
+                    JevShadow.new(config: config, scrub: @context_builder.method(:scrub_text), logger: logger)
       @logger = logger
     end
 
@@ -107,11 +111,19 @@ module Aireview
         time_budget: @config.llm_time_budget,
         overloaded_quarantine: @config.overloaded_quarantine,
         coverage: context.coverage,
-        sizes: context.sizes
+        sizes: context.sizes,
+        jev_shadow: critique ? jev_shadow_settings : nil
       }
     end
 
     private
+
+    # Only whether the key is set: its value never leaves.
+    def jev_shadow_settings
+      return nil unless @config.jev_shadow?
+
+      {model: @config.jev_model, key: Aireview::Utils.present?(@config.jev_api_key), thresholds: @config.jev_thresholds}
+    end
 
     # Where the model, provider and reserves of a stage came from, for --dry-run.
     def setting_sources(critique)
@@ -164,7 +176,9 @@ module Aireview
       return skip_critique(candidates, 'no candidates') if candidates.empty?
 
       @logger.info("Pipeline critique pass started (model=#{@config.critique_model})")
-      critique_candidates(context: context, candidates: candidates)
+      accepted = critique_candidates(context: context, candidates: candidates)
+      @jev_shadow.run(context: context, candidates: candidates, accepted: accepted) if @config.jev_shadow?
+      accepted
     end
 
     def critique_candidates(context:, candidates:)

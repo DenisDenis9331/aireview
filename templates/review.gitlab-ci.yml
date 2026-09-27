@@ -8,10 +8,10 @@
 #
 # Models, timeouts and the report language come from config/defaults.yml
 # inside the image; project rules come from .aireview.yml in the repository
-# root, if there is one. Secrets (AIREVIEW_GITLAB_TOKEN, GEMINI_API_KEYS) and
-# the proxy address are CI/CD variables of the project: group variables are
-# readable by any merge request of any project in the group (see README,
-# "Access to secrets").
+# root, if there is one. Secrets (AIREVIEW_GITLAB_TOKEN, GEMINI_API_KEYS,
+# JEV_API_KEY) and the proxy address are CI/CD variables of the project: group
+# variables are readable by any merge request of any project in the group (see
+# README, "Access to secrets").
 #
 # The runners are shell executors, so the image runs through docker run.
 # Config variables are passed by name (the list is Config.env_names): docker
@@ -79,6 +79,9 @@ aireview:
        -e LLM_MODELS
        -e LLM_CRITIQUE_RANK
        -e LLM_CRITIQUE_ALLOW_WEAKER
+       -e LLM_JEV_SHADOW
+       -e LLM_JEV_MODEL
+       -e JEV_API_KEY
        -e LLM_GENERATE_PROVIDER
        -e LLM_GENERATE_MODEL
        -e LLM_GENERATE_TEMPERATURE

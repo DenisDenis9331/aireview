@@ -36,3 +36,7 @@ llm:
     model: gemini-3.8-flash
     fallbacks:
       - gemini-3.7-flash
+  # Jev next to the Critique, log only (see README, "Jev shadow"); the key is JEV_API_KEY
+  # jev:
+  #   shadow: true
+  #   model: jev-1.13.0

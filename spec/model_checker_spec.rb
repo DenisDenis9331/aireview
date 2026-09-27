@@ -20,7 +20,7 @@ RSpec.describe Aireview::ModelChecker do
       llm_time_budget: 1_800, overloaded_quarantine: 120, llm_timeout: 60, fallback_names: [], warnings: [],
       api_key_counts: {'gemini' => 1},
       stage_model_source: nil, stage_fallbacks_source: nil, stage_provider_source: 'built-in', layer_paths: {},
-      routing: routing
+      routing: routing, jev_shadow?: false
     )
   end
   let(:routing) do

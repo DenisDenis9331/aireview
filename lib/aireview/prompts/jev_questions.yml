@@ -1,0 +1,79 @@
+# Jev questions about one candidate, the counterpart of critique.txt: the
+# rules are the same, only asked as separate yes/no and choice questions.
+# When critique.txt changes, change these too (spec/prompts_spec.rb checks
+# the key rules in both). %{id} is the candidate id; the state holds the
+# candidate at `candidates.<id>` and the diff at `diff`. Keys "true" and
+# "false" are quoted: YAML would read them as booleans.
+real_issue:
+  type: noul
+  instructions: >-
+    Is candidate `candidates.%{id}` a real, well-supported problem in the code
+    changed by this merge request?
+  criteria:
+    "true": >-
+      The problem is directly confirmed by the diff, the MR description, the
+      Jira task or the changed control/data flow, and it can lead to a real
+      defect, regression, security/performance issue, data loss or a mismatch
+      with the task. For category task_mismatch: the diff contains a concrete
+      artifact (debug code such as puts, p, binding.pry, byebug, console.log,
+      debugger; commented-out blocks; unused debug/test/helper methods;
+      temporary TODO/HACK/FIXME/DEBUG markers from this diff; disabled tests
+      such as skip, xit, pending without an explanation) or a change that
+      directly contradicts the MR or Jira.
+    "false": >-
+      The finding is not confirmed by the diff or Jira; it is based on an
+      assumption about code outside the diff; it contradicts the diff; it is
+      not actionable; it boils down to "may be redundant", "may conflict",
+      "may be unnecessary" or "worth checking" without a clear sign of
+      breakage, in any category. For category task_mismatch: implementation
+      details (config flags, deploy settings, new fields, helper methods),
+      accompanying refactoring and any change whose relation to the task is
+      plausible. A candidate with a `note` could not be anchored to the diff
+      mechanically and needs to be checked against the diff more carefully.
+      Missing text in a truncated part of the context does not mean a
+      missing requirement or missing code.
+enough_context:
+  type: noul
+  instructions: >-
+    Does the state contain enough to confirm or refute candidate
+    `candidates.%{id}`?
+  criteria:
+    "true": >-
+      The code the finding is about is present in `candidates.%{id}.evidence`
+      or in `diff`, and for a finding about the task the relevant MR or Jira
+      requirements are present and not cut off where they matter.
+    "false": >-
+      The decisive code or requirement is missing: the file is not shown, the
+      relevant part is truncated, or the finding depends on code or
+      requirements that are not in the state.
+version_claim:
+  type: noul
+  instructions: >-
+    Does candidate `candidates.%{id}` claim that a version of a package,
+    library, tool or image tag does not exist or has not been released yet?
+  criteria:
+    "true": >-
+      The finding says that a specified version does not exist, is not
+      released yet or is invalid because of its number.
+    "false": >-
+      The finding is about anything else, including syntax errors and explicit
+      contradictions with the MR or Jira requirements.
+# Only when the request holds more than one candidate; the options are the
+# other ids plus none.
+duplicate_of:
+  type: choice
+  instructions: >-
+    Does candidate `candidates.%{id}` describe the same problem as another
+    candidate?
+  other: The same problem as candidate `candidates.%{other}`.
+  none: A problem that no other candidate describes.
+# Goes to the log only; its answer does not decide anything yet.
+severity:
+  type: choice
+  instructions: >-
+    How severe is the problem described by candidate `candidates.%{id}`, if it
+    is real?
+  criteria:
+    critical: Breaks production behaviour, loses or corrupts data, or opens a security hole.
+    major: A real defect or regression on a common path, or a clear mismatch with the task.
+    minor: A limited edge case, a test gap or a maintainability issue.
