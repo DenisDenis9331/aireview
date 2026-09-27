@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.2.0
 
 - Jev shadow mode (`llm.jev.shadow`, `LLM_JEV_SHADOW`, key `JEV_API_KEY`):
   after the LLM Critique the same candidates go to Jev (TypeSafe), a fast
@@ -14,7 +14,8 @@
   the candidates it cannot judge, and all of them when Jev fails, go to the
   LLM Critique with `llm.jev.fallback: model` (the default), or are
   rejected / fail the run with `fail`. Duplicates are dropped once over the
-  merged verdicts. The report says how Jev took part.
+  merged verdicts. The report says how Jev took part. The Jev thresholds
+  default to a provisional 0.5 until they are chosen from the shadow logs.
 - The stages that need an LLM follow the engine: with Jev and
   `fallback: fail` the critique model, its key, its share of the context
   budget, the pool's critique policy and its `models check` probe are not
