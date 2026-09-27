@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.2.1
 
 - OpenAI reasoning models (`o1`, `o3`, `gpt-5`…) and search models
   (`gpt-4o-search-preview`…) get no temperature: RubyLLM 2 sends it as given
