@@ -44,7 +44,7 @@ RSpec.describe Aireview::ModelChecker do
 
   before do
     allow(config).to receive(:stage_chain) { |stage| routing.chain(stage) }
-    allow(config).to receive(:provider_api_keys) { |provider| provider == 'ollama' ? [nil] : ['key-one'] }
+    allow(config).to receive(:candidate_api_keys) { |candidate| candidate.provider == 'ollama' ? [nil] : ['key-one'] }
   end
 
   # The client answers by a script; the check is that the checker sends the

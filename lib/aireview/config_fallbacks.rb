@@ -27,6 +27,19 @@ module Aireview
       routing.chain(stage)
     end
 
+    # The keys a model is called with. A server of your own (a model with
+    # api_base) never gets the provider's key — OPENAI_API_KEY must not leave
+    # for a self-hosted server — but LLM_API_KEY, or a placeholder for a
+    # server without auth, since the client wants some key.
+    SELF_HOSTED_PLACEHOLDER_KEY = 'no-key'
+
+    def candidate_api_keys(candidate)
+      return provider_api_keys(candidate.provider) unless candidate.api_base
+      return [nil] if KEYLESS_PROVIDERS.include?(candidate.provider.to_s)
+
+      [Aireview::Utils.presence(llm_api_key) || SELF_HOSTED_PLACEHOLDER_KEY]
+    end
+
     # Keys in order of preference; a single nil for a keyless provider, so
     # that walking the chain does not depend on the provider.
     def provider_api_keys(provider)
@@ -47,9 +60,9 @@ module Aireview
     end
 
     # Only the number of keys per provider, for --dry-run; the values never
-    # leave.
+    # leave. Servers of your own are not counted: they take LLM_API_KEY.
     def api_key_counts(stages)
-      providers = stages.flat_map { |stage| stage_chain(stage).map(&:provider) }.uniq
+      providers = stages.flat_map { |stage| stage_chain(stage).reject(&:api_base).map(&:provider) }.uniq
       providers.reject { |provider| KEYLESS_PROVIDERS.include?(provider.to_s) }
         .to_h { |provider| [provider, provider_api_keys(provider).size] }
     end
@@ -89,8 +102,9 @@ module Aireview
       routing
 
       missing_keys = llm_stages(critique: critique).flat_map do |stage|
-        providers = stage_chain(stage).map(&:provider).uniq.reject { |provider| provider_keys_present?(provider) }
-        providers.map { |provider| "#{stage}: API key is required for provider #{provider.inspect}" }
+        providers = stage_chain(stage).reject(&:api_base).map(&:provider).uniq
+        providers.reject { |provider| provider_keys_present?(provider) }
+          .map { |provider| "#{stage}: API key is required for provider #{provider.inspect}" }
       end
       raise ConfigError, missing_keys.join(', ') unless missing_keys.empty?
     end
@@ -122,6 +136,7 @@ module Aireview
       {
         provider: stage_setting(stage, 'provider') || llm_provider,
         model: dig('llm', stage, 'model'),
+        api_base: dig('llm', stage, 'api_base'),
         fallbacks: dig('llm', stage, 'fallbacks'),
         max_prompt_chars: max_prompt_chars(stage)
       }

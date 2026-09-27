@@ -161,8 +161,8 @@ module Aireview
     # policy. Reserves of per-stage chains do not change the result.
     def result_signature
       {
-        'generate' => [generate_provider, generate_model, generate_temperature],
-        'critique' => (routing.stage?('critique') ? [critique_provider, critique_model, critique_temperature] : nil),
+        'generate' => stage_signature('generate', generate_temperature),
+        'critique' => (routing.stage?('critique') ? stage_signature('critique', critique_temperature) : nil),
         'critique_engine' => jev_signature,
         'pool' => routing.signature
       }
@@ -170,6 +170,13 @@ module Aireview
 
     def critique_provider
       routing.stage?('critique') ? routing.primary('critique').provider : nil
+    end
+
+    # The primary of a stage on a server of your own goes into the review key
+    # with its address; without one the signature is what it was.
+    def stage_signature(stage, temperature)
+      primary = routing.primary(stage)
+      [primary.provider, primary.model, temperature, *primary.api_base]
     end
 
     def generate_temperature

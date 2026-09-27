@@ -29,8 +29,18 @@ module Aireview
       'llm_http_proxy' => 'LLM_HTTP_PROXY',
       'jev_api_key' => 'JEV_API_KEY'
     }.freeze
-    PROVIDER_KEY_MAPPING = {'gemini' => 'GEMINI_API_KEY'}.freeze
-    PROVIDER_KEYS_MAPPING = {'gemini' => 'GEMINI_API_KEYS'}.freeze
+    PROVIDER_KEY_MAPPING = {
+      'gemini' => 'GEMINI_API_KEY',
+      'openai' => 'OPENAI_API_KEY',
+      'anthropic' => 'ANTHROPIC_API_KEY',
+      'openrouter' => 'OPENROUTER_API_KEY'
+    }.freeze
+    PROVIDER_KEYS_MAPPING = {
+      'gemini' => 'GEMINI_API_KEYS',
+      'openai' => 'OPENAI_API_KEYS',
+      'anthropic' => 'ANTHROPIC_API_KEYS',
+      'openrouter' => 'OPENROUTER_API_KEYS'
+    }.freeze
     CONTEXT_ENV = {
       'max_diff_chars' => 'MAX_DIFF_CHARS',
       'max_mr_description_chars' => 'MAX_MR_DESCRIPTION_CHARS',

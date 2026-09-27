@@ -60,7 +60,9 @@ RSpec.describe Aireview::Reviewer do
   end
 
   before do
-    allow(config).to receive(:provider_api_keys) { |provider| provider.to_s == 'ollama' ? [nil] : gemini_keys }
+    allow(config).to receive(:candidate_api_keys) do |candidate|
+      candidate.provider.to_s == 'ollama' ? [nil] : gemini_keys
+    end
     allow(router).to receive(:rand).with(Aireview::LlmRouter::SHORT_RETRY_JITTER_RANGE).and_return(1.0)
   end
 

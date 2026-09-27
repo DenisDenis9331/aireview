@@ -121,7 +121,7 @@ module Aireview
         stage: stage, system: prompt[:system_prompt], user: prompt[:user_prompt], temperature: 0,
         schema: stage == 'critique' ? CritiqueOutputSchema : GenerateOutputSchema
       )
-      key = @config.provider_api_keys(candidate.provider).first
+      key = @config.candidate_api_keys(candidate).first
       LlmClient.content(@client.request(request, candidate: candidate, key: key, timeout: @config.llm_timeout.to_f))
     end
 

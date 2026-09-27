@@ -27,9 +27,22 @@ module Aireview
       return false if Aireview::Utils.blank?(model)
 
       Array(items).each_with_index.any? do |item, index|
-        parsed = parse_item(item, index, provider)
-        parsed[:model] == model.to_s || "#{parsed[:provider]}/#{parsed[:model]}" == model.to_s
+        names(parse_item(item, index, provider)).include?(model.to_s)
       end
+    end
+
+    def self.item_candidate(item)
+      ModelCandidate.new(provider: item[:provider], model: item[:model], api_base: item[:api_base])
+    end
+
+    # The full name of a pool item, with the address of a server of your own.
+    def self.item_name(item)
+      item_candidate(item).to_s
+    end
+
+    # How a model may be named in a start or a CLI override (ModelCandidate#names).
+    def self.names(item)
+      item_candidate(item).names
     end
 
     def self.parse_item(item, index, provider)
@@ -42,7 +55,8 @@ module Aireview
       {
         provider: (item['provider'] || provider).to_s,
         model: item['model'].to_s,
-        max_prompt_chars: limit.nil? ? nil : StageChains.positive_limit(limit, name)
+        max_prompt_chars: limit.nil? ? nil : StageChains.positive_limit(limit, name),
+        api_base: ModelCandidate.api_base(item['api_base'], "#{name}.api_base")
       }
     end
 
@@ -76,7 +90,7 @@ module Aireview
       limit = @limits.fetch(stage.to_s)
       @items.map do |item|
         ModelCandidate.new(provider: item[:provider], model: item[:model],
-                           max_prompt_chars: item[:max_prompt_chars] || limit)
+                           max_prompt_chars: item[:max_prompt_chars] || limit, api_base: item[:api_base])
       end
     end
 
@@ -200,15 +214,16 @@ module Aireview
       raise ConfigError, "#{model} is not in llm.models: #{pool.join(', ')}"
     end
 
-    # A model is given by name or as "provider/name"; a candidate matches by provider and name.
+    # A model is given by name, as "provider/name" or by its full name; a
+    # candidate matches by provider, name and server address.
     def match?(item, model)
-      return "#{item[:provider]}/#{item[:model]}" == model.to_s if model.is_a?(ModelCandidate)
+      return self.class.item_name(item) == model.to_s if model.is_a?(ModelCandidate)
 
-      item[:model] == model.to_s || "#{item[:provider]}/#{item[:model]}" == model.to_s
+      self.class.names(item).include?(model.to_s)
     end
 
     def match_candidate?(candidate, model)
-      candidate.model == model.to_s || candidate.to_s == model.to_s
+      candidate.names.include?(model.to_s)
     end
 
     def critique_policy(rank, allow_weaker)
@@ -228,7 +243,7 @@ module Aireview
       parsed = Array(items).each_with_index.map { |item, index| self.class.parse_item(item, index, provider) }
       raise ConfigError, 'llm.models must not be empty' if parsed.empty?
 
-      names = parsed.map { |item| "#{item[:provider]}/#{item[:model]}" }
+      names = parsed.map { |item| self.class.item_name(item) }
       duplicates = names.tally.select { |_, count| count > 1 }.keys
       raise ConfigError, "llm.models has duplicates: #{duplicates.join(', ')}" unless duplicates.empty?
 

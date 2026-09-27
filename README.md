@@ -79,11 +79,18 @@ REVIEW_LANGUAGE=ru
 REVIEW_MODE=update
 ```
 
-At the moment only the `gemini` and `ollama` providers are supported. The
-provider and the model of each stage are set through `LLM_GENERATE_PROVIDER`,
-`LLM_GENERATE_MODEL`, `LLM_CRITIQUE_PROVIDER` and `LLM_CRITIQUE_MODEL`.
-`LLM_PROVIDER` stays the shared default when a stage has no provider of its
-own.
+The providers are `gemini`, `ollama`, `openai`, `anthropic` and
+`openrouter`, and any OpenAI-compatible server of your own (vLLM, llama.cpp,
+LM Studio) as `openai` with an `api_base`. The provider and the model of each
+stage are set through `LLM_GENERATE_PROVIDER`, `LLM_GENERATE_MODEL`,
+`LLM_CRITIQUE_PROVIDER` and `LLM_CRITIQUE_MODEL`. `LLM_PROVIDER` stays the
+shared default when a stage has no provider of its own. Gemini and Ollama
+are the ones the image defaults and the verified models are about; for the
+others run `aireview models check` before relying on a model.
+
+Each provider takes its keys from its own variables:
+`GEMINI_API_KEY(S)`, `OPENAI_API_KEY(S)`, `ANTHROPIC_API_KEY(S)`,
+`OPENROUTER_API_KEY(S)`; `LLM_API_KEY` is the shared fallback.
 
 `REVIEW_LANGUAGE` (or `review_language` in `.aireview.yml`) sets the language
 of the review: both the LLM answers and the headings of the rendered report.
@@ -174,6 +181,52 @@ Generate request is the probe, and what the router learns it remembers until
 the end of the run (see "Fallback models and keys"). The separate smoke test
 of every model with both schemas (`aireview models check`) runs on an image
 release and on a schedule, not on MRs.
+
+### A pool of models from several providers
+
+The critic is best the strongest model you have, and it does not have to be
+Gemini: the shared pool (see "Shared model pool") takes models of any
+provider, ordered by strength as you see it — the order is the only measure,
+names and release dates are not compared.
+
+```bash
+LLM_MODELS=anthropic/claude-opus-4.5,openai/gpt-5,gemini/gemini-3.8-flash,ollama/qwen2.5-coder:14b
+LLM_GENERATE_START=gemini-3.8-flash
+ANTHROPIC_API_KEY=xxx
+OPENAI_API_KEY=xxx
+GEMINI_API_KEY=xxx
+```
+
+In a string the provider goes in front of the model; an OpenRouter model has
+a slash of its own, so it is written with the prefix:
+`openrouter/qwen/qwen3-coder`. Servers of your own, one or several, are
+listed in `.aireview.yml` with their address:
+
+```yaml
+llm:
+  models:
+    - provider: anthropic
+      model: claude-opus-4.5
+    - provider: openai            # an OpenAI-compatible server of your own
+      model: qwen3-coder
+      api_base: http://gpu1:8000/v1
+    - provider: ollama
+      model: qwen2.5-coder:14b
+      api_base: http://gpu2:11434/v1
+  generate:
+    start: qwen2.5-coder:14b
+```
+
+`api_base` also works for a stage (`llm.generate.api_base`) and for a reserve
+in `fallbacks`. A model with its own `api_base` is named with the address
+(`openai/qwen3-coder@http://gpu1:8000/v1`), so two servers with the same model are
+two models for quarantine and the review key, and a start may name either.
+Such a server never gets a provider's key: it is called with `LLM_API_KEY`,
+or without auth when that is not set, and needs no key to start. Without an
+`api_base` a model goes to its provider's API, or to `LLM_API_BASE` for
+Gemini, OpenAI and OpenRouter as before.
+
+Instead of an LLM the critic can be Jev (see "Critique engine").
 
 ### Local Ollama
 

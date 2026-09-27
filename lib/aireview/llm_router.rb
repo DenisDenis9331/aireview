@@ -34,7 +34,7 @@ module Aireview
 
     Slot = Struct.new(:candidate, :index)
     # The key the next model of the same provider continues from.
-    Carry = Struct.new(:provider, :key_index)
+    Carry = Struct.new(:key_source, :key_index)
     Delay = Struct.new(:seconds, :source)
 
     SWITCH_HINT = 'Try again later or switch model via --generate-model/--critique-model.'
@@ -213,7 +213,7 @@ module Aireview
         log_switch(stage, route, visits)
         status, response = try_route(stage, route, visits, &request)
         return [:ok, remember(stage, route, response)] if status == :ok
-        return [:next_model, Carry.new(route.candidate.provider, route.key_index)] if status == :next_model
+        return [:next_model, Carry.new(route.candidate.key_source, route.key_index)] if status == :next_model
       end
       state(slot.candidate).exclude('daily quota exhausted on every key') unless tried
       [:next_model, carry]
@@ -224,7 +224,7 @@ module Aireview
     # is bound to "key + model", a failure on one model does not write the
     # key off for another.
     def candidate_routes(stage, slot, carry)
-      keys = @config.provider_api_keys(slot.candidate.provider)
+      keys = @config.candidate_api_keys(slot.candidate)
       routes = keys.each_with_index.map do |key, key_index|
         Route.new(candidate: slot.candidate, candidate_index: slot.index, key: key,
                   key_index: key_index, key_count: keys.size)
@@ -233,7 +233,7 @@ module Aireview
     end
 
     def start_key(stage, slot, carry)
-      return carry.key_index if carry && carry.provider == slot.candidate.provider
+      return carry.key_index if carry && carry.key_source == slot.candidate.key_source
 
       cursor_candidate, cursor_key = @cursor.fetch(stage, [0, 0])
       cursor_candidate == slot.index ? cursor_key : 0

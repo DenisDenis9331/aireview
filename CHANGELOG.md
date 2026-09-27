@@ -26,6 +26,15 @@
   their key and is no longer validated, so such a review is redone once.
 - `--dry-run` prints the Jev request for the stub candidate.
 - The gem now packages `lib/**/*.yml` (the Jev questions).
+- A pool of models from several providers: OpenAI, Anthropic and OpenRouter
+  take their keys from `OPENAI_API_KEY(S)`, `ANTHROPIC_API_KEY(S)`,
+  `OPENROUTER_API_KEY(S)`, and a string like `anthropic/claude-opus-4.5` in
+  `LLM_MODELS` or a reserve names the provider (an OpenRouter model goes with
+  the prefix: `openrouter/qwen/qwen3-coder`).
+- `api_base` for a model of the pool, a stage and a reserve: several servers
+  of your own in one pool. Such a model is named with its address, gets
+  `LLM_API_KEY` or no auth — never a provider's key — and needs no key to
+  start. Models without an address keep their names and review keys.
 
 ## 2.1.0
 

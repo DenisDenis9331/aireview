@@ -7,7 +7,8 @@ Gem::Specification.new do |spec|
   spec.summary = 'Local GitLab merge request review CLI powered by LLMs'
   spec.description = 'Reviews self-hosted GitLab merge requests with a two-pass LLM pipeline: ' \
                      'the first pass finds candidate findings, the second one critiques them and ' \
-                     'drops the weak ones. Supports Gemini and local Ollama, optional Jira context ' \
+                     'drops the weak ones. Supports Gemini, Ollama, OpenAI, Anthropic, OpenRouter and ' \
+                     'OpenAI-compatible servers, Jev as the critic, optional Jira context ' \
                      'and posting a single updatable review note back to the merge request.'
   spec.authors = ['Denis Levenko']
   spec.homepage = 'https://github.com/DenisDenis9331/aireview'

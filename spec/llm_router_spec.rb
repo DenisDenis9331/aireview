@@ -46,7 +46,7 @@ RSpec.describe Aireview::LlmRouter do
   end
 
   before do
-    allow(config).to receive(:provider_api_keys) { |provider| provider.to_s == 'ollama' ? [nil] : keys }
+    allow(config).to receive(:candidate_api_keys) { |candidate| candidate.provider.to_s == 'ollama' ? [nil] : keys }
     allow(router).to receive(:rand).with(Aireview::LlmRouter::SHORT_RETRY_JITTER_RANGE).and_return(1.0)
     allow(router).to receive(:rand).with(Aireview::LlmRouter::PROVIDER_RETRY_DELAY_MULTIPLIER_RANGE).and_return(2.0)
     allow(router).to receive(:rand).with(Aireview::LlmRouter::RATE_LIMIT_JITTER_RANGE).and_return(3.0)
