@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 require_relative 'errors'
+require_relative 'stages'
 require_relative 'utils'
 require_relative 'model_candidate'
 require_relative 'stage_chains'
@@ -26,9 +27,22 @@ module Aireview
       return false if Aireview::Utils.blank?(model)
 
       Array(items).each_with_index.any? do |item, index|
-        parsed = parse_item(item, index, provider)
-        parsed[:model] == model.to_s || "#{parsed[:provider]}/#{parsed[:model]}" == model.to_s
+        names(parse_item(item, index, provider)).include?(model.to_s)
       end
+    end
+
+    def self.item_candidate(item)
+      ModelCandidate.new(provider: item[:provider], model: item[:model], api_base: item[:api_base])
+    end
+
+    # The full name of a pool item, with the address of a server of your own.
+    def self.item_name(item)
+      item_candidate(item).to_s
+    end
+
+    # How a model may be named in a start or a CLI override (ModelCandidate#names).
+    def self.names(item)
+      item_candidate(item).names
     end
 
     def self.parse_item(item, index, provider)
@@ -41,7 +55,8 @@ module Aireview
       {
         provider: (item['provider'] || provider).to_s,
         model: item['model'].to_s,
-        max_prompt_chars: limit.nil? ? nil : StageChains.positive_limit(limit, name)
+        max_prompt_chars: limit.nil? ? nil : StageChains.positive_limit(limit, name),
+        api_base: ModelCandidate.api_base(item['api_base'], "#{name}.api_base")
       }
     end
 
@@ -50,30 +65,38 @@ module Aireview
     # the pool (image defaults versus the project's LLM_MODELS): such a start
     # missing from the pool is replaced by the first model with a warning,
     # an explicit start outside the pool is a configuration error;
-    # own_chains — stages with a chain of their own.
-    # Nine named settings read better than a struct for its own sake.
+    # own_chains — stages with a chain of their own; stages — the stages
+    # that go to an LLM in this run: without Critique (Jev decides with no
+    # fallback, --no-critique) the plan has no critique chain and no critique
+    # policy to validate or to sign.
+    # Ten named settings read better than a struct for its own sake.
     def initialize(items:, provider:, limits:, starts: {}, inherited_starts: [], rank: nil, allow_weaker: false, # rubocop:disable Metrics/ParameterLists
-                   own_chains: nil, only_primary: false)
+                   own_chains: nil, only_primary: false, stages: STAGES)
+      @stages = stages.map(&:to_s)
       @items = parse_items(items, provider)
       @limits = limits.transform_keys(&:to_s)
-      @rank = validate_rank(rank)
-      @allow_weaker = allow_weaker == true
+      @rank, @allow_weaker = critique_policy(rank, allow_weaker)
       @own_chains = own_chains || StageChains.new({})
       @only_primary = only_primary
       @warnings = []
       @starts = resolve_starts(starts.transform_keys(&:to_s), inherited_starts.map(&:to_s))
     end
 
+    def stage?(stage)
+      @stages.include?(stage.to_s)
+    end
+
     def pool(stage = 'generate')
       limit = @limits.fetch(stage.to_s)
       @items.map do |item|
         ModelCandidate.new(provider: item[:provider], model: item[:model],
-                           max_prompt_chars: item[:max_prompt_chars] || limit)
+                           max_prompt_chars: item[:max_prompt_chars] || limit, api_base: item[:api_base])
       end
     end
 
     def chain(stage)
       stage = stage.to_s
+      raise ArgumentError, "unknown LLM stage #{stage.inspect}" unless stage?(stage)
       return @own_chains.chain(stage) unless pool_stage?(stage)
 
       trim(pool(stage).rotate(index_of(@starts[stage] || @items.first[:model])))
@@ -107,21 +130,20 @@ module Aireview
 
     # The order and policy of the pool go into the review key: they decide
     # which model checks the findings. nil when a stage is outside the pool.
+    # Without Critique only the generate part: a critique setting nobody
+    # uses must not change the key, and the pool must stay in it.
     def signature
-      return nil unless both_stages_in_pool?
+      return nil unless all_stages_in_pool?
 
-      {
-        'models' => pool.map(&:to_s),
-        'generate_start' => @starts['generate'],
-        'critique_start' => @starts['critique'],
-        'rank' => @rank,
-        'allow_weaker' => @allow_weaker
-      }
+      signature = {'models' => pool.map(&:to_s), 'generate_start' => @starts['generate']}
+      return signature unless stage?('critique')
+
+      signature.merge('critique_start' => @starts['critique'], 'rank' => @rank, 'allow_weaker' => @allow_weaker)
     end
 
     # The critique selection rule in words, for --dry-run.
     def rule
-      return nil unless both_stages_in_pool?
+      return nil unless stage?('critique') && all_stages_in_pool?
       return @rank if @rank == 'any' || !@allow_weaker
 
       "#{@rank}, weaker allowed"
@@ -132,7 +154,7 @@ module Aireview
     end
 
     def pool_stage?(stage)
-      !@own_chains.stage?(stage)
+      stage?(stage) && !@own_chains.stage?(stage)
     end
 
     def pool_member?(model)
@@ -147,12 +169,12 @@ module Aireview
 
     private
 
-    def both_stages_in_pool?
-      STAGES.all? { |stage| pool_stage?(stage) }
+    def all_stages_in_pool?
+      @stages.all? { |stage| pool_stage?(stage) }
     end
 
     def rank_applies?(after)
-      both_stages_in_pool? && @rank != 'any' && pool_member?(after)
+      all_stages_in_pool? && @rank != 'any' && pool_member?(after)
     end
 
     def trim(chain)
@@ -174,7 +196,7 @@ module Aireview
 
     # The start of a stage with its own chain is not checked: it is outside the pool.
     def resolve_starts(starts, inherited)
-      STAGES.to_h do |stage|
+      @stages.to_h do |stage|
         start = starts[stage]
         next [stage, nil] if Aireview::Utils.blank?(start) || !pool_stage?(stage)
         next [stage, start] if pool_member?(start)
@@ -192,15 +214,22 @@ module Aireview
       raise ConfigError, "#{model} is not in llm.models: #{pool.join(', ')}"
     end
 
-    # A model is given by name or as "provider/name"; a candidate matches by provider and name.
+    # A model is given by name, as "provider/name" or by its full name; a
+    # candidate matches by provider, name and server address.
     def match?(item, model)
-      return "#{item[:provider]}/#{item[:model]}" == model.to_s if model.is_a?(ModelCandidate)
+      return self.class.item_name(item) == model.to_s if model.is_a?(ModelCandidate)
 
-      item[:model] == model.to_s || "#{item[:provider]}/#{item[:model]}" == model.to_s
+      self.class.names(item).include?(model.to_s)
     end
 
     def match_candidate?(candidate, model)
-      candidate.model == model.to_s || candidate.to_s == model.to_s
+      candidate.names.include?(model.to_s)
+    end
+
+    def critique_policy(rank, allow_weaker)
+      return [nil, false] unless stage?('critique')
+
+      [validate_rank(rank), allow_weaker == true]
     end
 
     def validate_rank(rank)
@@ -214,7 +243,7 @@ module Aireview
       parsed = Array(items).each_with_index.map { |item, index| self.class.parse_item(item, index, provider) }
       raise ConfigError, 'llm.models must not be empty' if parsed.empty?
 
-      names = parsed.map { |item| "#{item[:provider]}/#{item[:model]}" }
+      names = parsed.map { |item| self.class.item_name(item) }
       duplicates = names.tally.select { |_, count| count > 1 }.keys
       raise ConfigError, "llm.models has duplicates: #{duplicates.join(', ')}" unless duplicates.empty?
 

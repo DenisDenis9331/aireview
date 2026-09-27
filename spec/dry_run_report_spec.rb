@@ -31,6 +31,18 @@ RSpec.describe Aireview::DryRunReport do
     out.string.split("\n=== CONTEXT ===").first.chomp
   end
 
+  it 'prints the Jev shadow settings with only whether the key is set' do
+    jev = {model: 'jev-1.13.0', key: false, thresholds: {keep_above: 0.5, duplicate: 0.6}}
+
+    expect(settings(jev_shadow: jev)).to include(
+      'Jev shadow: jev-1.13.0 (key missing; log only, keep_above=0.5 duplicate=0.6)'
+    )
+  end
+
+  it 'prints nothing about Jev when the shadow is off' do
+    expect(settings).not_to include('Jev shadow')
+  end
+
   it 'prints where each model, provider and fallback list came from' do
     expect(settings).to eq(<<~TEXT.chomp)
       === LLM SETTINGS ===

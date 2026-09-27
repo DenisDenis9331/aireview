@@ -30,7 +30,7 @@ RSpec.describe 'templates/review.gitlab-ci.yml' do
     script = template.dig('aireview', 'script').join("\n")
 
     expect(script).to include('-e GITLAB_TOKEN')
-    expect(script).not_to match(/-e "?(GITLAB_TOKEN|GEMINI_API_KEYS?)=/)
+    expect(script).not_to match(/-e "?(GITLAB_TOKEN|(GEMINI|OPENAI|ANTHROPIC|OPENROUTER|JEV)_API_KEYS?)=/)
     expect(script).to include('if [ -f "$CI_PROJECT_DIR/.aireview.yml" ]')
     expect(script).to include('/app/.aireview.yml:ro')
   end

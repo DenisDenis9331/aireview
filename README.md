@@ -79,11 +79,18 @@ REVIEW_LANGUAGE=ru
 REVIEW_MODE=update
 ```
 
-At the moment only the `gemini` and `ollama` providers are supported. The
-provider and the model of each stage are set through `LLM_GENERATE_PROVIDER`,
-`LLM_GENERATE_MODEL`, `LLM_CRITIQUE_PROVIDER` and `LLM_CRITIQUE_MODEL`.
-`LLM_PROVIDER` stays the shared default when a stage has no provider of its
-own.
+The providers are `gemini`, `ollama`, `openai`, `anthropic` and
+`openrouter`, and any OpenAI-compatible server of your own (vLLM, llama.cpp,
+LM Studio) as `openai` with an `api_base`. The provider and the model of each
+stage are set through `LLM_GENERATE_PROVIDER`, `LLM_GENERATE_MODEL`,
+`LLM_CRITIQUE_PROVIDER` and `LLM_CRITIQUE_MODEL`. `LLM_PROVIDER` stays the
+shared default when a stage has no provider of its own. Gemini and Ollama
+are the ones the image defaults and the verified models are about; for the
+others run `aireview models check` before relying on a model.
+
+Each provider takes its keys from its own variables:
+`GEMINI_API_KEY(S)`, `OPENAI_API_KEY(S)`, `ANTHROPIC_API_KEY(S)`,
+`OPENROUTER_API_KEY(S)`; `LLM_API_KEY` is the shared fallback.
 
 `REVIEW_LANGUAGE` (or `review_language` in `.aireview.yml`) sets the language
 of the review: both the LLM answers and the headings of the rendered report.
@@ -174,6 +181,52 @@ Generate request is the probe, and what the router learns it remembers until
 the end of the run (see "Fallback models and keys"). The separate smoke test
 of every model with both schemas (`aireview models check`) runs on an image
 release and on a schedule, not on MRs.
+
+### A pool of models from several providers
+
+The critic is best the strongest model you have, and it does not have to be
+Gemini: the shared pool (see "Shared model pool") takes models of any
+provider, ordered by strength as you see it — the order is the only measure,
+names and release dates are not compared.
+
+```bash
+LLM_MODELS=anthropic/claude-opus-4.5,openai/gpt-5,gemini/gemini-3.8-flash,ollama/qwen2.5-coder:14b
+LLM_GENERATE_START=gemini-3.8-flash
+ANTHROPIC_API_KEY=xxx
+OPENAI_API_KEY=xxx
+GEMINI_API_KEY=xxx
+```
+
+In a string the provider goes in front of the model; an OpenRouter model has
+a slash of its own, so it is written with the prefix:
+`openrouter/qwen/qwen3-coder`. Servers of your own, one or several, are
+listed in `.aireview.yml` with their address:
+
+```yaml
+llm:
+  models:
+    - provider: anthropic
+      model: claude-opus-4.5
+    - provider: openai            # an OpenAI-compatible server of your own
+      model: qwen3-coder
+      api_base: http://gpu1:8000/v1
+    - provider: ollama
+      model: qwen2.5-coder:14b
+      api_base: http://gpu2:11434/v1
+  generate:
+    start: qwen2.5-coder:14b
+```
+
+`api_base` also works for a stage (`llm.generate.api_base`) and for a reserve
+in `fallbacks`. A model with its own `api_base` is named with the address
+(`openai/qwen3-coder@http://gpu1:8000/v1`), so two servers with the same model are
+two models for quarantine and the review key, and a start may name either.
+Such a server never gets a provider's key: it is called with `LLM_API_KEY`,
+or without auth when that is not set, and needs no key to start. Without an
+`api_base` a model goes to its provider's API, or to `LLM_API_BASE` for
+Gemini, OpenAI and OpenRouter as before.
+
+Instead of an LLM the critic can be Jev (see "Critique engine").
 
 ### Local Ollama
 
@@ -521,6 +574,124 @@ cut). What is checked is the link to the code, not the bug itself:
 Critique receives the result of the check in the candidate's `note` field
 and decides keep/reject with it in mind. With `--no-critique` the check works
 the same way, its marks just go straight to the report.
+
+### Critique engine: an LLM or Jev
+
+`llm.critique.engine` picks who checks the candidates of the first pass:
+
+| | `model` (default) | `jev` |
+|---|---|---|
+| What checks | the LLM Critique chain or pool (`LLM_CRITIQUE_MODEL`, `critique.rank`) | [Jev](https://docs.typesafe.ai), a classifier by TypeSafe |
+| Context | the whole prompt: MR, Jira, diff | the same, cut to Jev's limits (see below) |
+| Wording of findings | refined by the critic | the first pass's own |
+| Time and cost | tens of seconds, provider quota | under a second, per input token |
+| Depends on Gemini | when the critique model is Gemini | no, with `fallback: fail` |
+| Non-English reviews | fine | not declared by TypeSafe, check first |
+| Code leaves for | the LLM provider | TypeSafe as well |
+
+The default stays `model`. A stronger critic than the generator is set with
+the existing settings (`LLM_CRITIQUE_MODEL`, or the order of the pool); Jev is
+meant for when speed or independence from the LLM quota matters more than
+refined wording, and only after its thresholds are chosen from the shadow
+logs (see below).
+
+```yaml
+llm:
+  critique:
+    engine: jev           # LLM_CRITIQUE_ENGINE, --critique-engine jev
+  jev:
+    model: jev-1.13.0     # LLM_JEV_MODEL; a pinned version, an alias is an error here
+    fallback: model       # LLM_JEV_FALLBACK: model or fail
+    keep_above: 0.5       # LLM_JEV_KEEP_ABOVE; enough_context, version_claim, duplicate in YAML
+```
+
+With `engine: jev` Jev answers the questions of `prompts/jev_questions.yml`
+about every candidate and decides:
+
+- claims that a version does not exist — reject;
+- not enough in the request to judge it, or too large for a Jev request —
+  unverifiable: with `fallback: model` such candidates go to the LLM
+  Critique (only them), with `fallback: fail` they are rejected;
+- otherwise keep when `real_issue` reaches `keep_above`;
+- duplicates are dropped once, over what Jev and the LLM kept together: the
+  more severe finding stays, on a tie the one the first pass listed first.
+
+When Jev fails (network, 429/529 after one retry, an invalid answer), the
+LLM Critique takes over with `fallback: model`, and the run fails with
+`fallback: fail`. The report says how Jev took part: checked by Jev without
+refining the wording, partly by the LLM, or by the LLM because Jev was
+unavailable. `engine: jev` without `JEV_API_KEY` or with an alias is a
+configuration error at start; `--no-critique` switches off every engine.
+
+What an LLM is still needed for follows the engine: with `fallback: fail`
+there is no LLM Critique at all, so its model and key are not required
+(generate on Ollama with Jev needs no Gemini key), the context budget counts
+generate only, the pool's critique policy is not used and `models check`
+probes the generate stage only. `models check` also sends Jev a probe
+request: with `engine: jev` it counts, in shadow mode it is shown but never
+fails the check. `--dry-run` shows the Jev request for the stub candidate
+(`=== JEV STATE ===`, `=== JEV QUESTIONS ===`).
+
+The review key follows the engine too: with `engine: jev` it includes the Jev
+version, every threshold, the fallback and the question templates; the LLM
+Critique model counts only while Jev can fall back to it. With the default
+engine the key is what it was before Jev, whatever `llm.jev` says. Without
+an LLM Critique (Jev with `fallback: fail`, or `--no-critique`) the critique
+settings — model, limit, start, rank, allow_weaker — are neither validated
+nor part of the key, while the generate pool stays in it.
+
+### Jev shadow (experiment)
+
+Jev is a classifier, not a text model: it answers yes/no and choice
+questions about a given state with probabilities. Before it decides anything
+as the engine, it can run in shadow mode next to the default engine: after
+the LLM Critique the same candidates go to Jev, and its decisions are logged
+next to the Critique verdicts. The report and the review key do not change;
+with `engine: jev` the shadow is ignored.
+
+```yaml
+llm:
+  jev:
+    shadow: true          # LLM_JEV_SHADOW=true
+    model: jev-1.13.0     # LLM_JEV_MODEL; a pinned version, not jev-latest
+    timeout: 10           # seconds per request
+    keep_above: 0.5       # provisional thresholds, only for the log line
+    enough_context: 0.5
+    version_claim: 0.5
+    duplicate: 0.5
+```
+
+The key is `JEV_API_KEY`. For every candidate Jev is asked whether it is a
+real, well-supported problem (the rules of `prompts/critique.txt`, asked in
+`prompts/jev_questions.yml`), whether the state holds enough to judge it,
+whether it claims that a version does not exist, which other candidate it
+duplicates, and how severe it is. The log gets one line per candidate and a
+summary:
+
+```
+Jev shadow C1: keep (real issue; real_issue=0.91 enough_context=0.88 version_claim=0.02 duplicate_of=none/0.97 severity=major/0.74), critique: keep
+Jev shadow: agrees with critique on 2 of 2 decided candidate(s); keep 1, reject 1, unverifiable 1 (model=jev-1.13.0, requests=1, 0.4s)
+```
+
+The readable lines round the numbers; a third line, `Jev shadow data: {…}`,
+carries every decision with the probabilities exactly as Jev returned them,
+so thresholds can be chosen from the logs afterwards. The version that
+answered is logged too, and a pinned version answering as another one is a
+warning. A Jev failure (network, 429/529 after
+one retry, an invalid answer, no key) is a warning and never affects the
+review. Jev goes out through `LLM_HTTP_PROXY` like the LLM providers.
+
+What leaves for TypeSafe: the MR title and description, the Jira section,
+`review_instructions`, the diff shown to the models and the candidates, after
+the same secret scrubbing as the LLM prompts. Jev limits a request to 32k
+tokens for the state plus the longest question and 64k for the state plus all
+questions; the state is cut to what the questions leave (the diff first, then
+the MR and Jira sections, never the candidates and the hunks they point at),
+and when the candidates do not fit together, each goes in a request of its
+own. The size is estimated from characters; if Jev still rejects a request
+as too large (a 422 that explicitly says it exceeds a limit), its candidates
+are asked about one by one, and one that is too large alone stays
+unverifiable. Any other 422 is not retried.
 
 ## Usage
 

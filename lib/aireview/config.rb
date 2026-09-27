@@ -6,6 +6,7 @@ require_relative 'errors'
 require_relative 'utils'
 require_relative 'config_limits'
 require_relative 'config_fallbacks'
+require_relative 'config_jev'
 require_relative 'config_layers'
 require_relative 'config_loader'
 
@@ -16,6 +17,7 @@ module Aireview
   class Config
     include ConfigLimits
     include ConfigFallbacks
+    include ConfigJev
     include ConfigLayers
 
     DEFAULT_SECRET_FILES = [
@@ -76,20 +78,27 @@ module Aireview
 
     # CLI overrides change only the primary model of a stage, the reserves
     # from the config stay; no_fallbacks leaves one model and one key.
-    def with_overrides(
+    # no_critique — --no-critique: the run has no Critique, so its settings
+    # are neither routed nor validated (see llm_stages).
+    # Seven named flags of the CLI read better than a struct for its own sake.
+    def with_overrides( # rubocop:disable Metrics/ParameterLists
       generate_model: nil,
       critique_model: nil,
       generate_temperature: nil,
       critique_temperature: nil,
-      no_fallbacks: false
+      critique_engine: nil,
+      no_fallbacks: false,
+      no_critique: false
     )
       llm_config = {
         'generate' => stage_overrides(model: generate_model, temperature: generate_temperature),
         'critique' => stage_overrides(model: critique_model, temperature: critique_temperature)
+          .merge({'engine' => critique_engine}.compact)
       }.reject { |_, overrides| overrides.empty? }
       overrides = {}
       overrides['llm'] = llm_config unless llm_config.empty?
       overrides['fallbacks_disabled'] = true if no_fallbacks
+      overrides['critique_disabled'] = true if no_critique
       return self if overrides.empty?
 
       self.class.new(
@@ -137,8 +146,9 @@ module Aireview
       routing.primary('generate').model
     end
 
+    # nil when no LLM Critique can run (see llm_stages).
     def critique_model
-      routing.primary('critique').model
+      routing.stage?('critique') ? routing.primary('critique').model : nil
     end
 
     def generate_provider
@@ -147,18 +157,26 @@ module Aireview
 
     # Everything besides the prompt that affects the review result goes into
     # the note key (see ReviewMarker): provider, model and temperature of the
-    # stages, the shared pool with its critique policy. Reserves of per-stage
-    # chains do not change the result.
+    # stages, Jev as the critique engine, the shared pool with its critique
+    # policy. Reserves of per-stage chains do not change the result.
     def result_signature
       {
-        'generate' => [generate_provider, generate_model, generate_temperature],
-        'critique' => [critique_provider, critique_model, critique_temperature],
+        'generate' => stage_signature('generate', generate_temperature),
+        'critique' => (routing.stage?('critique') ? stage_signature('critique', critique_temperature) : nil),
+        'critique_engine' => jev_signature,
         'pool' => routing.signature
       }
     end
 
     def critique_provider
-      routing.primary('critique').provider
+      routing.stage?('critique') ? routing.primary('critique').provider : nil
+    end
+
+    # The primary of a stage on a server of your own goes into the review key
+    # with its address; without one the signature is what it was.
+    def stage_signature(stage, temperature)
+      primary = routing.primary(stage)
+      [primary.provider, primary.model, temperature, *primary.api_base]
     end
 
     def generate_temperature

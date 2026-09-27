@@ -152,6 +152,83 @@ RSpec.describe Aireview::ReviewMarker do
     end
   end
 
+  describe '.key with Jev as the critique engine' do
+    let(:merge_request) do
+      {'title' => 'Fix totals', 'description' => 'Tax must stay', 'source_branch' => 'fix',
+       'target_branch' => 'main', 'author' => {'name' => 'Denis'}}
+    end
+    let(:changes) { [{'old_path' => 'a.rb', 'new_path' => 'a.rb', 'diff' => "@@ -1 +1 @@\n-old\n+new\n"}] }
+
+    def jev_config(jev: {}, critique: {}, engine: 'jev')
+      llm = {
+        'provider' => 'gemini', 'temperature' => 0,
+        'generate' => {'model' => 'gemini-3.7-flash'},
+        'critique' => {'model' => 'gemini-3.8-flash', 'engine' => engine}.merge(critique),
+        'jev' => jev
+      }
+      config('llm' => llm, 'jev_api_key' => 'j')
+    end
+
+    def key_for(config, critique: true)
+      pipeline = Aireview::ReviewPipeline.new(config: config, reviewer: instance_double(Aireview::Reviewer),
+                                              logger: Logger.new(File::NULL))
+      prompts = pipeline.dry_run_prompts(merge_request: merge_request, changes: changes, critique: critique)
+      described_class.key(prompts: prompts, config: config)
+    end
+
+    it 'is the key from before Jev with the model engine, whatever the Jev settings' do
+      plain = key_for(config)
+
+      expect(key_for(jev_config(engine: 'model', jev: {'shadow' => true, 'keep_above' => 0.9}))).to eq(plain)
+    end
+
+    it 'changes with the engine, the version, every threshold and the fallback' do
+      base = key_for(jev_config)
+      variants = [
+        {'model' => 'jev-1.14.0'}, {'keep_above' => 0.6}, {'enough_context' => 0.6},
+        {'version_claim' => 0.6}, {'duplicate' => 0.6}, {'fallback' => 'fail'}
+      ]
+
+      expect(base).not_to eq(key_for(config))
+      variants.each { |jev| expect(key_for(jev_config(jev: jev))).not_to eq(base), jev.inspect }
+    end
+
+    it 'changes when only the criteria of the duplicate question change' do
+      base = key_for(jev_config)
+      templates = Aireview::JevCritic.decision_templates
+      changed = templates.merge('duplicate_of' => templates['duplicate_of'].merge('none' => 'Nothing alike.'))
+      allow(Aireview::JevCritic).to receive(:decision_templates).and_return(changed)
+
+      expect(key_for(jev_config)).not_to eq(base)
+    end
+
+    it 'follows the LLM critique model while Jev can fall back to it, and ignores it otherwise' do
+      other_model = {'model' => 'gemini-3.6-flash'}
+
+      expect(key_for(jev_config(critique: other_model))).not_to eq(key_for(jev_config))
+      expect(key_for(jev_config(jev: {'fallback' => 'fail'}, critique: other_model)))
+        .to eq(key_for(jev_config(jev: {'fallback' => 'fail'})))
+    end
+
+    it 'keeps the generate pool in the key and ignores an unused critique model when Jev cannot fall back' do
+      pool_config = lambda do |models, critique: {}|
+        llm = {'provider' => 'gemini', 'models' => models, 'critique' => {'engine' => 'jev'}.merge(critique),
+               'jev' => {'fallback' => 'fail'}}
+        config('llm' => llm, 'jev_api_key' => 'j')
+      end
+      base = key_for(pool_config.call(%w[g1 g2]))
+
+      expect(key_for(pool_config.call(%w[g1 g2], critique: {'model' => 'c1'}))).to eq(base)
+      expect(key_for(pool_config.call(%w[g1 g3]))).not_to eq(base)
+      expect(key_for(pool_config.call(%w[g1 g3], critique: {'model' => 'c1'})))
+        .not_to eq(key_for(pool_config.call(%w[g1 g2], critique: {'model' => 'c1'})))
+    end
+
+    it 'has no critique part at all with --no-critique, whatever the engine' do
+      expect(key_for(jev_config, critique: false)).to eq(key_for(config, critique: false))
+    end
+  end
+
   describe '.state' do
     let(:merge_request) do
       {

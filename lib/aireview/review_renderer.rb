@@ -47,6 +47,10 @@ module Aireview
         section_list: 'Truncated sections',
         fallback_used: 'Fallback model used',
         critique_weaker: 'Critique ran on a model weaker than Generate: the findings were checked less strictly.',
+        jev: 'The findings were checked by Jev, a fast classifier, without refining their wording.',
+        jev_partial: 'The findings were checked by Jev, a fast classifier, without refining their wording; ' \
+                     'those Jev could not judge were checked by the LLM critique.',
+        jev_failed: 'Jev was unavailable: the findings were checked by the LLM critique.',
         quote_missing: 'quote not found in the diff'
       },
       'ru' => {
@@ -74,6 +78,10 @@ module Aireview
         section_list: 'Усечённые секции',
         fallback_used: 'Использована резервная модель',
         critique_weaker: 'Критика выполнена моделью слабее generate: замечания проверены менее строго.',
+        jev: 'Замечания проверены быстрым классификатором Jev, без уточнения формулировок.',
+        jev_partial: 'Замечания проверены быстрым классификатором Jev, без уточнения формулировок; ' \
+                     'те, что Jev не смог оценить, проверила LLM-критика.',
+        jev_failed: 'Jev был недоступен: замечания проверила LLM-критика.',
         quote_missing: 'цитата не найдена в диффе'
       }
     }.freeze
@@ -86,7 +94,9 @@ module Aireview
     # result is still about the findings; incomplete coverage is written
     # next to it so that the result line does not read as "everything was
     # checked".
-    def render(accepted, summary:, coverage: nil, fallback_models: {}, critique_weaker: false)
+    # jev_note — how Jev took part in the critique (see JevStage::Outcome).
+    # The facts about the run are named one by one on purpose.
+    def render(accepted, summary:, coverage: nil, fallback_models: {}, critique_weaker: false, jev_note: nil) # rubocop:disable Metrics/ParameterLists
       mismatches, important = select_findings(Array(accepted))
       result = mismatches.empty? && important.empty? ? 'ok' : 'needs attention'
 
@@ -106,7 +116,7 @@ module Aireview
         ## #{label(:result)}
 
         #{result}#{partial_note(coverage)}
-        #{coverage_block(coverage)}#{fallback_note(fallback_models)}#{weaker_note(critique_weaker)}
+        #{coverage_block(coverage)}#{fallback_note(fallback_models)}#{weaker_note(critique_weaker)}#{jev_note(jev_note)}
         #{label(:disclaimer)}
       MARKDOWN
     end
@@ -189,6 +199,12 @@ module Aireview
       return '' unless critique_weaker
 
       "\n#{label(:critique_weaker)}\n"
+    end
+
+    # Jev decides keep/reject but cannot refine: the reader should know the
+    # wording is the first pass's own.
+    def jev_note(note)
+      note ? "\n#{label(note)}\n" : ''
     end
 
     def fallback_note(fallback_models)

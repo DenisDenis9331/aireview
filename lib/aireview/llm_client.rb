@@ -30,7 +30,7 @@ module Aireview
       stage = prompt.stage.to_s
       model = candidate.model
       @logger.info("LLM #{stage} request started (model=#{model}, temperature=#{prompt.temperature})")
-      chat = build_chat(context: context(stage, candidate.provider, key, key_index), stage: stage,
+      chat = build_chat(context: context(stage, candidate, key, key_index), stage: stage,
                         model: model, provider: candidate.provider)
       chat = configure_reasoning(chat: chat, model: model, provider: candidate.provider)
         .with_temperature(prompt.temperature.to_f)
@@ -99,18 +99,19 @@ module Aireview
       context.chat(model: model, provider: provider.to_sym, assume_model_exists: true)
     end
 
-    # A RubyLLM context per stage, provider and key index: switching the key
-    # is another context, not an edit of the global config.
-    def context(stage, provider, key, key_index)
-      @contexts[[stage, provider, key_index]] ||= build_context(provider.to_s, key)
+    # A RubyLLM context per stage, key source (a provider's API or a server
+    # of your own) and key index: switching the key is another context, not
+    # an edit of the global config.
+    def context(stage, candidate, key, key_index)
+      @contexts[[stage, candidate.key_source, key_index]] ||= build_context(candidate, key)
     end
 
-    def build_context(provider, api_key)
+    def build_context(candidate, api_key)
       RubyLLM.context do |ruby_config|
         configure_http_proxy(ruby_config)
         ruby_config.request_timeout = @config.llm_timeout.to_f
         ruby_config.max_retries = 0
-        configure_provider(ruby_config, provider, api_key)
+        configure_provider(ruby_config, candidate.provider.to_s, api_key, candidate.api_base)
       end
     end
 
@@ -120,27 +121,30 @@ module Aireview
       ruby_config.http_proxy = @config.llm_http_proxy
     end
 
-    def configure_provider(ruby_config, provider, api_key)
+    # api_base — the model's own server; without it the provider's API,
+    # or LLM_API_BASE for the providers that always took it.
+    def configure_provider(ruby_config, provider, api_key, api_base)
       case provider
       when 'gemini', 'openai', 'openrouter'
-        configure_remote_provider(ruby_config, provider, api_key)
+        configure_remote_provider(ruby_config, provider, api_key, api_base || @config.llm_api_base)
       when 'anthropic'
         ruby_config.anthropic_api_key = api_key
+        ruby_config.anthropic_api_base = api_base if api_base
       when 'ollama'
-        ruby_config.ollama_api_base = @config.ollama_api_base
+        ruby_config.ollama_api_base = api_base || @config.ollama_api_base
       else
         raise ConfigError, "Unsupported LLM provider: #{provider.inspect}"
       end
     end
 
     # RubyLLM 2 sends OpenAI requests to the Responses API; a compatible
-    # server behind LLM_API_BASE usually has Chat Completions only.
-    def configure_remote_provider(ruby_config, provider, api_key)
+    # server usually has Chat Completions only.
+    def configure_remote_provider(ruby_config, provider, api_key, api_base)
       ruby_config.public_send("#{provider}_api_key=", api_key)
       ruby_config.openai_protocol = :chat_completions if provider == 'openai'
-      return unless Aireview::Utils.present?(@config.llm_api_base)
+      return unless Aireview::Utils.present?(api_base)
 
-      ruby_config.public_send("#{provider}_api_base=", @config.llm_api_base)
+      ruby_config.public_send("#{provider}_api_base=", api_base)
     end
   end
 end

@@ -29,8 +29,9 @@ RSpec.describe Aireview::ReviewPipeline do
       stage_fallbacks_source: nil,
       stage_provider_source: 'built-in',
       layer_paths: {},
-      api_key_counts: {'gemini' => 1}
-    )
+      api_key_counts: {'gemini' => 1},
+      jev_shadow?: false
+    ).tap { |double| allow_model_engine(double) }
   end
 
   let(:reviewer) do
@@ -115,6 +116,138 @@ RSpec.describe Aireview::ReviewPipeline do
     expect(result).not_to include('Jira requires discounts')
     expect(result).not_to include('Name is unclear')
     expect(result).to include('needs attention')
+  end
+
+  describe 'Jev shadow' do
+    let(:jev_shadow) { instance_double('Aireview::JevShadow', run: nil) }
+    let(:verdicts) do
+      JSON.generate(
+        verdicts: [
+          { id: 'C1', decision: 'keep', reason: 'confirmed by diff' },
+          { id: 'C2', decision: 'reject', reason: 'not supported by diff' },
+          { id: 'C3', decision: 'reject', reason: 'not actionable' }
+        ]
+      )
+    end
+
+    def shadow_pipeline
+      described_class.new(config: config, reviewer: reviewer, jev_shadow: jev_shadow, logger: logger)
+    end
+
+    before do
+      allow(reviewer).to receive(:generate).and_return(generate_result(candidates))
+      allow(reviewer).to receive(:critique).and_return(verdicts)
+    end
+
+    it 'gets the checked candidates and what the critique kept, and does not change the report' do
+      without_shadow = shadow_pipeline.run(merge_request: merge_request, changes: changes)
+      allow(config).to receive(:jev_shadow?).and_return(true)
+
+      with_shadow = shadow_pipeline.run(merge_request: merge_request, changes: changes)
+
+      expect(jev_shadow).to have_received(:run) do |context:, candidates:, accepted:|
+        expect(context.diff_text).to include('total = subtotal')
+        expect(candidates.map { |candidate| candidate['id'] }).to eq(%w[C1 C2 C3])
+        expect(accepted.map { |candidate| candidate['id'] }).to eq(%w[C1])
+      end
+      expect(with_shadow).to eq(without_shadow)
+    end
+
+    it 'does not run when it is off, without critique or without candidates' do
+      shadow_pipeline.run(merge_request: merge_request, changes: changes)
+      allow(config).to receive(:jev_shadow?).and_return(true)
+      shadow_pipeline.run(merge_request: merge_request, changes: changes, critique: false)
+      allow(reviewer).to receive(:generate).and_return(generate_result([]))
+      shadow_pipeline.run(merge_request: merge_request, changes: changes)
+
+      expect(jev_shadow).not_to have_received(:run)
+    end
+
+    it 'shows the shadow settings in dry-run without the key' do
+      allow(config).to receive_messages(jev_shadow?: true, jev_model: 'jev-1.13.0', jev_api_key: 'secret',
+                                        jev_thresholds: {keep_above: 0.5})
+
+      dry_run = shadow_pipeline.dry_run_prompts(merge_request: merge_request, changes: changes)
+
+      expect(dry_run[:jev_shadow]).to eq(model: 'jev-1.13.0', key: true, thresholds: {keep_above: 0.5})
+      expect(shadow_pipeline.dry_run_prompts(merge_request: merge_request, changes: changes, critique: false))
+        .to include(jev_shadow: nil)
+    end
+  end
+
+  describe 'Jev as the critique engine' do
+    # Calls the LLM critique of the pipeline for the candidates it names, as
+    # JevStage does with the ones Jev could not judge.
+    let(:stage_class) do
+      Class.new do
+        attr_reader :calls
+
+        def initialize(outcome, send_to_llm: [])
+          @outcome = outcome
+          @send_to_llm = send_to_llm
+          @calls = 0
+        end
+
+        def run(context:, candidates:, llm_critique:)
+          @calls += 1
+          subset = candidates.select { |candidate| @send_to_llm.include?(candidate['id']) }
+          kept = subset.empty? ? [] : llm_critique.call(subset)
+          Aireview::JevStage::Outcome.new(accepted: @outcome.accepted + kept, note: @outcome.note)
+        end
+      end
+    end
+    let(:jev_shadow) { instance_double('Aireview::JevShadow', run: nil) }
+
+    def jev_pipeline(stage)
+      described_class.new(config: config, reviewer: reviewer, logger: logger, jev_stage: stage, jev_shadow: jev_shadow)
+    end
+
+    before do
+      allow(config).to receive(:jev_critique?).and_return(true)
+      allow(config).to receive(:jev_shadow?).and_return(true)
+      allow(reviewer).to receive(:generate).and_return(generate_result(candidates))
+    end
+
+    it 'renders what Jev kept with the Jev note, without the LLM critique and the shadow' do
+      kept = JSON.parse(JSON.generate(candidates.first))
+      stage = stage_class.new(Aireview::JevStage::Outcome.new(accepted: [kept], note: :jev))
+      allow(reviewer).to receive(:critique)
+
+      result = jev_pipeline(stage).run(merge_request: merge_request, changes: changes)
+
+      expect(result).to include('Tax is no longer included')
+      expect(result).not_to include('Jira requires discounts')
+      expect(result).to include('The findings were checked by Jev, a fast classifier, without refining their wording.')
+      expect(reviewer).not_to have_received(:critique)
+      expect(jev_shadow).not_to have_received(:run)
+    end
+
+    it 'gives the LLM critique only the candidates Jev passes on' do
+      stage = stage_class.new(Aireview::JevStage::Outcome.new(accepted: [], note: :jev_partial), send_to_llm: %w[C2])
+      prompts = []
+      allow(reviewer).to receive(:critique) do |**prompt|
+        prompts << prompt[:user_prompt]
+        JSON.generate(verdicts: [{id: 'C2', decision: 'keep', reason: 'confirmed'}])
+      end
+
+      result = jev_pipeline(stage).run(merge_request: merge_request, changes: changes)
+
+      expect(prompts.size).to eq(1)
+      expect(prompts.first).to include('"id": "C2"')
+      expect(prompts.first).not_to include('"id": "C1"', '"id": "C3"')
+      expect(result).to include('Jira requires discounts')
+      expect(result).to include('those Jev could not judge were checked by the LLM critique')
+    end
+
+    it 'is not used with --no-critique' do
+      stage = stage_class.new(Aireview::JevStage::Outcome.new(accepted: [], note: :jev))
+      allow(config).to receive(:jev_critique?) { |critique: true| critique }
+
+      result = jev_pipeline(stage).run(merge_request: merge_request, changes: changes, critique: false)
+
+      expect(stage.calls).to eq(0)
+      expect(result).not_to include('Jev')
+    end
   end
 
   it 'renders ok when critique rejects every candidate' do
@@ -505,8 +638,10 @@ RSpec.describe Aireview::ReviewPipeline do
       generate_model: 'g', generate_temperature: 0, critique_model: 'c', critique_temperature: 0,
       llm_time_budget: 1_800, overloaded_quarantine: 120, fallback_names: [], warnings: [],
       routing: instance_double('Aireview::StageChains', rule: nil), api_key_counts: {'gemini' => 1},
-      stage_model_source: nil, stage_fallbacks_source: nil, stage_provider_source: 'built-in', layer_paths: {}
+      stage_model_source: nil, stage_fallbacks_source: nil, stage_provider_source: 'built-in', layer_paths: {},
+      jev_shadow?: false
     )
+    allow_model_engine(config)
     pipeline = described_class.new(config: config, reviewer: reviewer, logger: logger)
     big = changes.first.merge('new_path' => 'big.rb', 'old_path' => 'big.rb', 'diff' => "@@ -1,3 +1,3 @@\n#{"+x\n" * 300}")
     allow(reviewer).to receive(:generate).and_return(generate_result([]))

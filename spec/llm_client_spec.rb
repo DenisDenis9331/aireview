@@ -26,15 +26,15 @@ RSpec.describe Aireview::LlmClient do
   let(:context_config_class) do
     Struct.new(:http_proxy, :request_timeout, :max_retries, :gemini_api_key, :gemini_api_base, :ollama_api_base,
                :openai_api_key, :openai_api_base, :openai_protocol, :openrouter_api_key, :openrouter_api_base,
-               :anthropic_api_key, keyword_init: true)
+               :anthropic_api_key, :anthropic_api_base, keyword_init: true)
   end
   let(:prompt) do
     described_class::Prompt.new(stage: 'generate', system: 'system prompt', user: 'user prompt',
                                 temperature: 0.3, schema: Aireview::GenerateOutputSchema)
   end
 
-  def candidate(provider, model)
-    Aireview::ModelCandidate.new(provider: provider, model: model, max_prompt_chars: 400_000)
+  def candidate(provider, model, api_base: nil)
+    Aireview::ModelCandidate.new(provider: provider, model: model, max_prompt_chars: 400_000, api_base: api_base)
   end
 
   def request(**options)
@@ -188,6 +188,21 @@ RSpec.describe Aireview::LlmClient do
 
       expect(context_configs.first.to_h.compact).to eq(http_proxy: 'http://127.0.0.1:8888', request_timeout: 60.0,
                                                        max_retries: 0, anthropic_api_key: 'anthropic-key')
+    end
+
+    it 'sends a model on a server of its own to that server, one context per server' do
+      request(candidate: candidate('openai', 'qwen3-coder', api_base: 'http://gpu1:8000/v1'), key: 'no-key')
+      request(candidate: candidate('openai', 'qwen3-coder', api_base: 'http://gpu2:8000/v1'), key: 'no-key')
+      request(candidate: candidate('anthropic', 'claude-x', api_base: 'https://proxy.example.test'), key: 'a')
+      request(candidate: candidate('ollama', 'qwen2.5-coder:7b', api_base: 'http://gpu3:11434/v1'))
+
+      expect(context_configs.map { |config| config.to_h.compact.except(:http_proxy, :request_timeout, :max_retries) })
+        .to eq([
+                 {openai_api_key: 'no-key', openai_api_base: 'http://gpu1:8000/v1', openai_protocol: :chat_completions},
+                 {openai_api_key: 'no-key', openai_api_base: 'http://gpu2:8000/v1', openai_protocol: :chat_completions},
+                 {anthropic_api_key: 'a', anthropic_api_base: 'https://proxy.example.test'},
+                 {ollama_api_base: 'http://gpu3:11434/v1'}
+               ])
     end
 
     it 'leaves the API base alone when none is configured' do

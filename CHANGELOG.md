@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased
+
+- Jev shadow mode (`llm.jev.shadow`, `LLM_JEV_SHADOW`, key `JEV_API_KEY`):
+  after the LLM Critique the same candidates go to Jev (TypeSafe), a fast
+  classifier, and its keep/reject/unverifiable decisions with the raw
+  probabilities are logged next to the Critique verdicts. The report and the
+  review key do not change; a Jev failure is a warning. The data is for
+  choosing between an LLM and Jev as the critic later.
+- Critique engine (`llm.critique.engine`, `LLM_CRITIQUE_ENGINE`,
+  `--critique-engine`): `model` (the default, the LLM Critique as before) or
+  `jev`. With `jev` Jev decides keep/reject without refining the wording;
+  the candidates it cannot judge, and all of them when Jev fails, go to the
+  LLM Critique with `llm.jev.fallback: model` (the default), or are
+  rejected / fail the run with `fail`. Duplicates are dropped once over the
+  merged verdicts. The report says how Jev took part.
+- The stages that need an LLM follow the engine: with Jev and
+  `fallback: fail` the critique model, its key, its share of the context
+  budget, the pool's critique policy and its `models check` probe are not
+  required. `models check` probes Jev as well (counted only for the engine).
+- The review key includes the Jev version, thresholds, fallback and
+  question templates with `engine: jev`; with the default engine it does not
+  change, except for runs with `--no-critique`: the unused critique policy
+  of the pool (`critique.start`, `rank`, `allow_weaker`) no longer enters
+  their key and is no longer validated, so such a review is redone once.
+- `--dry-run` prints the Jev request for the stub candidate.
+- The gem now packages `lib/**/*.yml` (the Jev questions).
+- A pool of models from several providers: OpenAI, Anthropic and OpenRouter
+  take their keys from `OPENAI_API_KEY(S)`, `ANTHROPIC_API_KEY(S)`,
+  `OPENROUTER_API_KEY(S)`, and a string like `anthropic/claude-opus-4.5` in
+  `LLM_MODELS` or a reserve names the provider (an OpenRouter model goes with
+  the prefix: `openrouter/qwen/qwen3-coder`).
+- `api_base` for a model of the pool, a stage and a reserve: several servers
+  of your own in one pool. Such a model is named with its address, gets
+  `LLM_API_KEY` or no auth — never a provider's key — and needs no key to
+  start. Models without an address keep their names and review keys.
+
 ## 2.1.0
 
 - An answer that is not valid JSON and that the provider cut off at the

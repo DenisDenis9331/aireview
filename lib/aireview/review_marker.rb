@@ -23,14 +23,19 @@ module Aireview
     # that way the diff, the MR description, the Jira context, the review
     # instructions and ignore_paths enter it by themselves. What else affects
     # the result — provider, model and temperature of the stages, the shared
-    # pool with its critique policy — is known by Config#result_signature.
-    # Without a pool the key is the same as before.
+    # pool with its critique policy, Jev as the critique engine — is known by
+    # Config#result_signature. Without a pool the key is the same as before.
+    # The LLM Critique counts only when it can run (its prompt is there),
+    # Jev only when it decides (its question templates are there): with the
+    # default engine the key is what it was before Jev.
     def key(prompts:, config:)
       signature = config.result_signature
       source = {
         'generate' => [*signature['generate'], prompts[:generate_prompt]],
         'critique' => prompts[:critique_prompt] ? [*signature['critique'], prompts[:critique_prompt]] : nil
       }
+      jev = prompts[:jev_questions]
+      source['critique_engine'] = [*signature['critique_engine'], jev] if jev
       source['pool'] = signature['pool'] if signature['pool']
 
       Digest::SHA256.hexdigest(JSON.generate(source))[0, 16]

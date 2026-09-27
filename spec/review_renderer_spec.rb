@@ -82,6 +82,15 @@ RSpec.describe Aireview::ReviewRenderer do
     expect(result).to include("## Не вошло в ревью\n\n- app/a.rb")
   end
 
+  it 'says how Jev took part in the critique, in the report language' do
+    en = described_class.new.render([finding], summary: 'x', jev_note: :jev_failed)
+    ru = described_class.new(language: 'ru').render([finding], summary: 'x', jev_note: :jev_partial)
+
+    expect(en).to include('Jev was unavailable: the findings were checked by the LLM critique.')
+    expect(ru).to include('те, что Jev не смог оценить, проверила LLM-критика.')
+    expect(described_class.new.render([finding], summary: 'x')).not_to include('Jev')
+  end
+
   it 'names the stages that answered with a fallback model' do
     result = described_class.new.render([], summary: 'x', fallback_models: {'critique' => 'gemini/gemini-3.7-flash'})
 

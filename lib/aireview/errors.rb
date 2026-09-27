@@ -14,4 +14,15 @@ module Aireview
   class RouteExhaustedError < ApiError; end
   class ContextBudgetError < Error; end
   class HelpRequested < Error; end
+
+  # A Jev request failed: network, HTTP status, an answer of the wrong shape.
+  # status is the HTTP status when the server answered.
+  class JevError < Error
+    attr_reader :status
+
+    def initialize(message, status: nil)
+      super(message)
+      @status = status
+    end
+  end
 end

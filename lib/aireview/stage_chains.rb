@@ -26,7 +26,8 @@ module Aireview
       primary = ModelCandidate.new(
         provider: settings.fetch(:provider).to_s,
         model: settings[:model],
-        max_prompt_chars: settings.fetch(:max_prompt_chars)
+        max_prompt_chars: settings.fetch(:max_prompt_chars),
+        api_base: ModelCandidate.api_base(settings[:api_base], "llm.#{stage}.api_base")
       )
       return [primary] if only_primary
 
@@ -34,7 +35,8 @@ module Aireview
     end
 
     # A reserve without a provider inherits the stage provider, without a
-    # limit its limit.
+    # limit its limit. The address is not inherited: a reserve on another
+    # server names its own.
     def self.fallbacks(stage, items, primary)
       items.each_with_index.map do |item, index|
         item = ModelCandidate.parse_item(item)
@@ -46,7 +48,8 @@ module Aireview
         ModelCandidate.new(
           provider: (item['provider'] || primary.provider).to_s,
           model: item['model'].to_s,
-          max_prompt_chars: limit.nil? ? primary.max_prompt_chars : positive_limit(limit, name)
+          max_prompt_chars: limit.nil? ? primary.max_prompt_chars : positive_limit(limit, name),
+          api_base: ModelCandidate.api_base(item['api_base'], "#{name}.api_base")
         )
       end
     end

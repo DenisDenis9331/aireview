@@ -22,8 +22,9 @@ module Aireview
     CANDIDATES_RESERVE_CHARS = 4_500
 
     # The context of one run: both stages get the same MR, Jira and diff,
-    # truncated once for the tightest of the stages.
-    Context = Struct.new(:user_prompt, :diff_text, :coverage, :sizes, keyword_init: true)
+    # truncated once for the tightest of the stages. sections — the MR and
+    # Jira part without the diff, for Jev.
+    Context = Struct.new(:user_prompt, :sections, :diff_text, :coverage, :sizes, keyword_init: true)
 
     def initialize(config:, logger: Logger.new($stderr))
       @config = config
@@ -49,7 +50,8 @@ module Aireview
 
       sizes = context_sizes(fixed: fixed, packed: packed, budget: budget, diff_budget: diff_budget, critique: critique)
       log_sizes(sizes)
-      Context.new(user_prompt: fixed + packed.text, diff_text: packed.text, coverage: coverage, sizes: sizes)
+      Context.new(user_prompt: fixed + packed.text, sections: sections.join("\n\n"), diff_text: packed.text,
+                  coverage: coverage, sizes: sizes)
     end
 
     def build_generate_prompt(context)
@@ -88,12 +90,17 @@ module Aireview
       {system_prompt: system, user_prompt: user}
     end
 
+    def scrub_text(text)
+      @secret_scrubber.scrub_text(text.to_s)
+    end
+
     private
 
     # The minimum over the stages: the context is one per run, so it must fit
-    # into each of them together with its system prompt and reserve.
+    # into each of them together with its system prompt and reserve. Only the
+    # stages that go to an LLM count: Jev as the critic has limits of its own.
     def context_budget(critique:)
-      stages = critique ? STAGES : ['generate']
+      stages = @config.llm_stages(critique: critique)
       budgets = stages.to_h { |stage| [stage, stage_budget(stage)] }
       stage, budget = budgets.min_by { |_, value| value }
       return budget if budget.positive?
@@ -153,7 +160,7 @@ module Aireview
     end
 
     def context_sizes(fixed:, packed:, budget:, diff_budget:, critique:)
-      stages = critique ? STAGES : ['generate']
+      stages = @config.llm_stages(critique: critique)
       {
         context_budget: budget,
         diff_budget: diff_budget,
@@ -185,10 +192,6 @@ module Aireview
     def scrub_optional_text(text)
       scrubbed = scrub_text(text)
       Aireview::Utils.presence(scrubbed) || '(empty)'
-    end
-
-    def scrub_text(text)
-      @secret_scrubber.scrub_text(text.to_s)
     end
 
     def language_name(code)

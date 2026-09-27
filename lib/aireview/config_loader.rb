@@ -26,10 +26,21 @@ module Aireview
       'review_mode' => 'REVIEW_MODE',
       'llm_api_base' => 'LLM_API_BASE',
       'ollama_api_base' => 'OLLAMA_API_BASE',
-      'llm_http_proxy' => 'LLM_HTTP_PROXY'
+      'llm_http_proxy' => 'LLM_HTTP_PROXY',
+      'jev_api_key' => 'JEV_API_KEY'
     }.freeze
-    PROVIDER_KEY_MAPPING = {'gemini' => 'GEMINI_API_KEY'}.freeze
-    PROVIDER_KEYS_MAPPING = {'gemini' => 'GEMINI_API_KEYS'}.freeze
+    PROVIDER_KEY_MAPPING = {
+      'gemini' => 'GEMINI_API_KEY',
+      'openai' => 'OPENAI_API_KEY',
+      'anthropic' => 'ANTHROPIC_API_KEY',
+      'openrouter' => 'OPENROUTER_API_KEY'
+    }.freeze
+    PROVIDER_KEYS_MAPPING = {
+      'gemini' => 'GEMINI_API_KEYS',
+      'openai' => 'OPENAI_API_KEYS',
+      'anthropic' => 'ANTHROPIC_API_KEYS',
+      'openrouter' => 'OPENROUTER_API_KEYS'
+    }.freeze
     CONTEXT_ENV = {
       'max_diff_chars' => 'MAX_DIFF_CHARS',
       'max_mr_description_chars' => 'MAX_MR_DESCRIPTION_CHARS',
@@ -38,7 +49,8 @@ module Aireview
     }.freeze
     LLM_ENV = %w[
       LLM_PROVIDER LLM_TEMPERATURE LLM_TIMEOUT LLM_MAX_PROMPT_CHARS LLM_TIME_BUDGET LLM_OVERLOADED_QUARANTINE
-      LLM_MODELS LLM_CRITIQUE_RANK LLM_CRITIQUE_ALLOW_WEAKER
+      LLM_MODELS LLM_CRITIQUE_RANK LLM_CRITIQUE_ALLOW_WEAKER LLM_CRITIQUE_ENGINE
+      LLM_JEV_SHADOW LLM_JEV_MODEL LLM_JEV_FALLBACK LLM_JEV_KEEP_ABOVE
     ].freeze
     LLM_STAGE_ENV_SUFFIXES = %w[PROVIDER MODEL TEMPERATURE MAX_PROMPT_CHARS FALLBACK_MODEL START].freeze
     IMAGE_DEFAULTS_ENV = 'AIREVIEW_DEFAULTS'
@@ -141,8 +153,21 @@ module Aireview
         'time_budget' => parse_integer(env['LLM_TIME_BUDGET'], 'LLM_TIME_BUDGET'),
         'overloaded_quarantine' => parse_integer(env['LLM_OVERLOADED_QUARANTINE'], 'LLM_OVERLOADED_QUARANTINE'),
         'generate' => llm_stage_env_config(env, 'GENERATE'),
-        'critique' => llm_stage_env_config(env, 'CRITIQUE')
-      }.compact.reject { |key, value| %w[generate critique].include?(key) && value.empty? }
+        'critique' => llm_stage_env_config(env, 'CRITIQUE'),
+        'jev' => jev_env_config(env)
+      }.compact.reject { |key, value| %w[generate critique jev].include?(key) && value.empty? }
+    end
+
+    # LLM_JEV_SHADOW=true|false, LLM_JEV_MODEL — a pinned Jev version,
+    # LLM_JEV_FALLBACK=model|fail, LLM_JEV_KEEP_ABOVE — the keep threshold.
+    def jev_env_config(env)
+      {
+        'shadow' => parse_boolean(env['LLM_JEV_SHADOW'], 'LLM_JEV_SHADOW'),
+        'model' => Aireview::Utils.presence(env['LLM_JEV_MODEL']),
+        'fallback' => Aireview::Utils.presence(env['LLM_JEV_FALLBACK']),
+        # Validated by ConfigJev: a typo must fail, not fall back to the default.
+        'keep_above' => Aireview::Utils.presence(env['LLM_JEV_KEEP_ABOVE'])
+      }.compact
     end
 
     def llm_stage_env_config(env, stage)
@@ -176,6 +201,7 @@ module Aireview
         'generate' => {'start' => env['LLM_GENERATE_START']}.compact,
         'critique' => {
           'start' => env['LLM_CRITIQUE_START'],
+          'engine' => Aireview::Utils.presence(env['LLM_CRITIQUE_ENGINE']),
           'rank' => env['LLM_CRITIQUE_RANK'],
           'allow_weaker' => parse_boolean(env['LLM_CRITIQUE_ALLOW_WEAKER'], 'LLM_CRITIQUE_ALLOW_WEAKER')
         }.compact
