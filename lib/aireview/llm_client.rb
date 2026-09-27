@@ -17,6 +17,16 @@ module Aireview
       end
     end
 
+    # RubyLLM 2 sends the temperature as given, while 1.x replaced it with
+    # 1.0 for OpenAI reasoning models (o1, o3, gpt-5…) and dropped it for the
+    # search ones (gpt-4o-search-preview…), which take no other: such a
+    # request is a BadRequest, fatal for the router, and the stage would not
+    # even reach a fallback model. The RubyLLM registry knows which models
+    # take a temperature; where it does not (a server of your own,
+    # assume_model_exists, search models with an empty flag) the name
+    # decides, as in 1.x.
+    NO_TEMPERATURE_MODELS = %r{\A(?:openai/)?(?:o\d|gpt-5)|-search}
+
     def initialize(config:, logger: Logger.new($stderr))
       @config = config
       @logger = logger
@@ -26,22 +36,31 @@ module Aireview
     # Returns the RubyLLM answer; read it with LlmClient.content. A request
     # error is re-raised as is — LlmFailure classifies it.
     def request(prompt, candidate:, key:, timeout:, key_index: 0)
-      load_ruby_llm
       stage = prompt.stage.to_s
       model = candidate.model
-      @logger.info("LLM #{stage} request started (model=#{model}, temperature=#{prompt.temperature})")
-      chat = build_chat(context: context(stage, candidate, key, key_index), stage: stage,
-                        model: model, provider: candidate.provider)
-      chat = configure_reasoning(chat: chat, model: model, provider: candidate.provider)
-        .with_temperature(prompt.temperature.to_f)
-        .with_schema(prompt.schema)
-      chat.with_instructions(prompt.system)
+      chat = prepare(prompt, candidate: candidate, key: key, key_index: key_index)
+      @logger.info("LLM #{stage} request started (model=#{model}, temperature=#{chat.temperature || 'model default'})")
       response = Timeout.timeout(timeout) { chat.ask(prompt.user) }
       @logger.info("LLM #{stage} request completed (model=#{model}#{token_counts(response)})")
       response
     rescue Timeout::Error
       @logger.warn("LLM #{stage} request timed out after #{timeout.round} seconds (model=#{model})")
       raise
+    end
+
+    # The request as it will go, without sending it: the chat with the model,
+    # key, schema, instructions and temperature set. chat.render builds it —
+    # that is how the specs check the real request without the network.
+    def prepare(prompt, candidate:, key:, key_index: 0)
+      load_ruby_llm
+      stage = prompt.stage.to_s
+      chat = build_chat(context: context(stage, candidate, key, key_index), stage: stage,
+                        model: candidate.model, provider: candidate.provider)
+      chat = configure_reasoning(chat: chat, model: candidate.model, provider: candidate.provider)
+        .with_temperature(temperature_for(chat, prompt, candidate))
+        .with_schema(prompt.schema)
+      chat.with_instructions(prompt.system)
+      chat
     end
 
     # The answer as RubyLLM 1.x gave it under a schema: the parsed JSON when
@@ -80,6 +99,14 @@ module Aireview
     rescue LoadError => e
       @logger.error("LLM setup failed: #{e.message}")
       raise ConfigError, "Missing dependency: #{e.message}"
+    end
+
+    # The temperature for a model that takes one (see NO_TEMPERATURE_MODELS);
+    # nil — its own default, left out of the request.
+    def temperature_for(chat, prompt, candidate)
+      accepts = chat.model.metadata[:temperature] if chat.model.respond_to?(:metadata)
+      accepts = !candidate.model.to_s.match?(NO_TEMPERATURE_MODELS) if accepts.nil?
+      accepts ? prompt.temperature.to_f : nil
     end
 
     def configure_reasoning(chat:, model:, provider:)

@@ -53,6 +53,8 @@ RSpec.describe Aireview::LlmClient do
       context
     end
     allow(chat).to receive(:with_temperature).and_return(chat)
+    allow(chat).to receive(:model).and_return(RubyLLM::Model.new(id: 'm', provider: 'gemini', metadata: {temperature: true}))
+    allow(chat).to receive(:temperature).and_return(0.3)
     allow(chat).to receive(:with_schema).and_return(chat)
     allow(chat).to receive(:with_thinking).and_return(chat)
     allow(chat).to receive(:with_instructions).and_return(chat)

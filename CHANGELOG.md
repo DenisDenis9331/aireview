@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- OpenAI reasoning models (`o1`, `o3`, `gpt-5`…) and search models
+  (`gpt-4o-search-preview`…) get no temperature: RubyLLM 2 sends it as given
+  (1.x replaced it with 1.0 or dropped it), and these models reject any
+  other value with a bad request, which failed the run without trying a
+  fallback model. The RubyLLM registry says which models take a
+  temperature; a model it does not know is judged by its name, as 1.x did.
+  `models check` is fixed the same way.
+
 ## 2.2.0
 
 - Jev shadow mode (`llm.jev.shadow`, `LLM_JEV_SHADOW`, key `JEV_API_KEY`):
