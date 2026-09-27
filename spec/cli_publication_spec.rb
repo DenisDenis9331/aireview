@@ -433,4 +433,32 @@ RSpec.describe 'aireview review --dry-run' do
     expect(out.string).to include('[1 file(s) not shown: big.rb]')
     expect(out.string).to include('=== CRITIQUE USER PROMPT ===')
   end
+
+  def dry_run(*flags, env: {})
+    allow(Aireview::Config).to receive(:load).and_return(config)
+    allow(Aireview::GitlabClient).to receive(:new)
+      .and_return(RecordingGitlabClient.new(merge_request: merge_request, changes: changes))
+    out = StringIO.new
+    err = StringIO.new
+    status = Aireview::CLI.start(
+      ['review', 'https://gitlab.example.com/group/project/-/merge_requests/5', '--dry-run', '--no-jira', *flags],
+      out: out, err: err, env: env
+    )
+    [status, out.string, err.string]
+  end
+
+  it 'switches the critique engine with --critique-engine and wants the Jev key only for a critique' do
+    status, _, err = dry_run('--critique-engine', 'jev')
+    expect(status).to eq(1)
+    expect(err).to include('llm.critique.engine is jev, but JEV_API_KEY is not set')
+
+    status, out, = dry_run('--critique-engine', 'jev', '--no-critique')
+    expect(status).to eq(0)
+    expect(out).to include('Critique: disabled')
+    expect(out).not_to include('JEV STATE')
+
+    # Like every option with a fixed set of values (--review-mode).
+    expect { dry_run('--critique-engine', 'llm') }
+      .to raise_error(OptionParser::InvalidArgument, /--critique-engine llm/)
+  end
 end

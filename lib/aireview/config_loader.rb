@@ -39,7 +39,8 @@ module Aireview
     }.freeze
     LLM_ENV = %w[
       LLM_PROVIDER LLM_TEMPERATURE LLM_TIMEOUT LLM_MAX_PROMPT_CHARS LLM_TIME_BUDGET LLM_OVERLOADED_QUARANTINE
-      LLM_MODELS LLM_CRITIQUE_RANK LLM_CRITIQUE_ALLOW_WEAKER LLM_JEV_SHADOW LLM_JEV_MODEL
+      LLM_MODELS LLM_CRITIQUE_RANK LLM_CRITIQUE_ALLOW_WEAKER LLM_CRITIQUE_ENGINE
+      LLM_JEV_SHADOW LLM_JEV_MODEL LLM_JEV_FALLBACK LLM_JEV_KEEP_ABOVE
     ].freeze
     LLM_STAGE_ENV_SUFFIXES = %w[PROVIDER MODEL TEMPERATURE MAX_PROMPT_CHARS FALLBACK_MODEL START].freeze
     IMAGE_DEFAULTS_ENV = 'AIREVIEW_DEFAULTS'
@@ -147,11 +148,15 @@ module Aireview
       }.compact.reject { |key, value| %w[generate critique jev].include?(key) && value.empty? }
     end
 
-    # LLM_JEV_SHADOW=true|false, LLM_JEV_MODEL — a pinned Jev version.
+    # LLM_JEV_SHADOW=true|false, LLM_JEV_MODEL — a pinned Jev version,
+    # LLM_JEV_FALLBACK=model|fail, LLM_JEV_KEEP_ABOVE — the keep threshold.
     def jev_env_config(env)
       {
         'shadow' => parse_boolean(env['LLM_JEV_SHADOW'], 'LLM_JEV_SHADOW'),
-        'model' => Aireview::Utils.presence(env['LLM_JEV_MODEL'])
+        'model' => Aireview::Utils.presence(env['LLM_JEV_MODEL']),
+        'fallback' => Aireview::Utils.presence(env['LLM_JEV_FALLBACK']),
+        # Validated by ConfigJev: a typo must fail, not fall back to the default.
+        'keep_above' => Aireview::Utils.presence(env['LLM_JEV_KEEP_ABOVE'])
       }.compact
     end
 
@@ -186,6 +191,7 @@ module Aireview
         'generate' => {'start' => env['LLM_GENERATE_START']}.compact,
         'critique' => {
           'start' => env['LLM_CRITIQUE_START'],
+          'engine' => Aireview::Utils.presence(env['LLM_CRITIQUE_ENGINE']),
           'rank' => env['LLM_CRITIQUE_RANK'],
           'allow_weaker' => parse_boolean(env['LLM_CRITIQUE_ALLOW_WEAKER'], 'LLM_CRITIQUE_ALLOW_WEAKER')
         }.compact

@@ -99,9 +99,11 @@ module Aireview
         critique_model: options[:critique_model],
         generate_temperature: options[:generate_temperature],
         critique_temperature: options[:critique_temperature],
-        no_fallbacks: options[:no_fallbacks] == true
+        critique_engine: options[:critique_engine],
+        no_fallbacks: options[:no_fallbacks] == true,
+        no_critique: options[:no_critique] == true
       )
-      config.require_llm_configuration!
+      config.require_llm_configuration!(critique: !options[:no_critique])
       config.warnings.each { |warning| @logger.warn(warning) }
       config
     end
@@ -335,6 +337,11 @@ module Aireview
         options[:critique_temperature] = value
       end
 
+      parser.on('--critique-engine ENGINE', Aireview::Config::CRITIQUE_ENGINES,
+                'Who checks the candidates: model (an LLM) or jev') do |value|
+        options[:critique_engine] = value
+      end
+
       parser.on('--no-critique', 'Skip critique pass and render Generate candidates directly') do
         options[:no_critique] = true
       end
@@ -407,6 +414,8 @@ module Aireview
                            Override Generate pass temperature
           --critique-temperature VALUE
                            Override Critique pass temperature
+          --critique-engine ENGINE
+                           Who checks the candidates: model (an LLM, default) or jev
           --config PATH    Path to .aireview.yml
           --review-mode MODE
                            How to treat an existing review: update (default) or once

@@ -79,8 +79,11 @@ aireview:
        -e LLM_MODELS
        -e LLM_CRITIQUE_RANK
        -e LLM_CRITIQUE_ALLOW_WEAKER
+       -e LLM_CRITIQUE_ENGINE
        -e LLM_JEV_SHADOW
        -e LLM_JEV_MODEL
+       -e LLM_JEV_FALLBACK
+       -e LLM_JEV_KEEP_ABOVE
        -e JEV_API_KEY
        -e LLM_GENERATE_PROVIDER
        -e LLM_GENERATE_MODEL

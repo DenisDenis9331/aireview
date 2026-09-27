@@ -522,15 +522,79 @@ Critique receives the result of the check in the candidate's `note` field
 and decides keep/reject with it in mind. With `--no-critique` the check works
 the same way, its marks just go straight to the report.
 
+### Critique engine: an LLM or Jev
+
+`llm.critique.engine` picks who checks the candidates of the first pass:
+
+| | `model` (default) | `jev` |
+|---|---|---|
+| What checks | the LLM Critique chain or pool (`LLM_CRITIQUE_MODEL`, `critique.rank`) | [Jev](https://docs.typesafe.ai), a classifier by TypeSafe |
+| Context | the whole prompt: MR, Jira, diff | the same, cut to Jev's limits (see below) |
+| Wording of findings | refined by the critic | the first pass's own |
+| Time and cost | tens of seconds, provider quota | under a second, per input token |
+| Depends on Gemini | when the critique model is Gemini | no, with `fallback: fail` |
+| Non-English reviews | fine | not declared by TypeSafe, check first |
+| Code leaves for | the LLM provider | TypeSafe as well |
+
+The default stays `model`. A stronger critic than the generator is set with
+the existing settings (`LLM_CRITIQUE_MODEL`, or the order of the pool); Jev is
+meant for when speed or independence from the LLM quota matters more than
+refined wording, and only after its thresholds are chosen from the shadow
+logs (see below).
+
+```yaml
+llm:
+  critique:
+    engine: jev           # LLM_CRITIQUE_ENGINE, --critique-engine jev
+  jev:
+    model: jev-1.13.0     # LLM_JEV_MODEL; a pinned version, an alias is an error here
+    fallback: model       # LLM_JEV_FALLBACK: model or fail
+    keep_above: 0.5       # LLM_JEV_KEEP_ABOVE; enough_context, version_claim, duplicate in YAML
+```
+
+With `engine: jev` Jev answers the questions of `prompts/jev_questions.yml`
+about every candidate and decides:
+
+- claims that a version does not exist — reject;
+- not enough in the request to judge it, or too large for a Jev request —
+  unverifiable: with `fallback: model` such candidates go to the LLM
+  Critique (only them), with `fallback: fail` they are rejected;
+- otherwise keep when `real_issue` reaches `keep_above`;
+- duplicates are dropped once, over what Jev and the LLM kept together: the
+  more severe finding stays, on a tie the one the first pass listed first.
+
+When Jev fails (network, 429/529 after one retry, an invalid answer), the
+LLM Critique takes over with `fallback: model`, and the run fails with
+`fallback: fail`. The report says how Jev took part: checked by Jev without
+refining the wording, partly by the LLM, or by the LLM because Jev was
+unavailable. `engine: jev` without `JEV_API_KEY` or with an alias is a
+configuration error at start; `--no-critique` switches off every engine.
+
+What an LLM is still needed for follows the engine: with `fallback: fail`
+there is no LLM Critique at all, so its model and key are not required
+(generate on Ollama with Jev needs no Gemini key), the context budget counts
+generate only, the pool's critique policy is not used and `models check`
+probes the generate stage only. `models check` also sends Jev a probe
+request: with `engine: jev` it counts, in shadow mode it is shown but never
+fails the check. `--dry-run` shows the Jev request for the stub candidate
+(`=== JEV STATE ===`, `=== JEV QUESTIONS ===`).
+
+The review key follows the engine too: with `engine: jev` it includes the Jev
+version, every threshold, the fallback and the question templates; the LLM
+Critique model counts only while Jev can fall back to it. With the default
+engine the key is what it was before Jev, whatever `llm.jev` says. Without
+an LLM Critique (Jev with `fallback: fail`, or `--no-critique`) the critique
+settings — model, limit, start, rank, allow_weaker — are neither validated
+nor part of the key, while the generate pool stays in it.
+
 ### Jev shadow (experiment)
 
-[Jev](https://docs.typesafe.ai) (TypeSafe) is a classifier, not a text model:
-it answers yes/no and choice questions about a given state with
-probabilities, in well under a second and for a fraction of an LLM request.
-It cannot rewrite a finding, so it can at most decide keep/reject. Before it
-is allowed to decide anything, it runs in shadow mode: after the LLM
-Critique the same candidates go to Jev, and its decisions are logged next to
-the Critique verdicts. The report and the review key do not change.
+Jev is a classifier, not a text model: it answers yes/no and choice
+questions about a given state with probabilities. Before it decides anything
+as the engine, it can run in shadow mode next to the default engine: after
+the LLM Critique the same candidates go to Jev, and its decisions are logged
+next to the Critique verdicts. The report and the review key do not change;
+with `engine: jev` the shadow is ignored.
 
 ```yaml
 llm:

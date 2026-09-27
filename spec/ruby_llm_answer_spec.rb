@@ -31,7 +31,7 @@ RSpec.describe 'RubyLLM answer through the reviewer and the pipeline' do
       overloaded_quarantine: 120,
       provider_api_keys: ['key-one'],
       jev_shadow?: false
-    )
+    ).tap { |double| allow_model_engine(double) }
   end
   let(:routing) do
     Aireview::StageChains.new(

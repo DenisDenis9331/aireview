@@ -4,6 +4,7 @@ require 'logger'
 require 'yaml'
 require_relative 'utils'
 require_relative 'candidate_checker'
+require_relative 'jev_client'
 
 module Aireview
   # Jev as a critic. Every candidate becomes a few questions
@@ -11,9 +12,13 @@ module Aireview
   # candidates with the hunks they point at, the diff. The answers turn into
   # keep, reject or unverifiable by thresholds, then duplicates among the
   # kept ones are dropped. Jev cannot rewrite a finding, so there is no
-  # refinement. For now only the shadow mode uses it.
+  # refinement. Used as the critique engine (JevStage) and in shadow mode.
   class JevCritic
     QUESTIONS = YAML.safe_load_file(File.expand_path('prompts/jev_questions.yml', __dir__)).freeze
+    # The questions whose answers decide; severity only goes to the log. Their
+    # templates go into the review key whole, not as asked about a stub
+    # candidate: a single stub gets no duplicate_of question.
+    DECISION_QUESTIONS = %w[real_issue enough_context version_claim duplicate_of].freeze
     # Jev limits (docs.typesafe.ai/models): the state plus the longest
     # question, and the state plus all questions together. Questions count
     # in both, so the state budget is what they leave.
@@ -44,8 +49,23 @@ module Aireview
 
     # decision — :keep, :reject or :unverifiable; answers — the numbers
     # behind it, for the log.
-    Assessment = Struct.new(:id, :decision, :reason, :answers, keyword_init: true)
-    Result = Struct.new(:assessments, :requests, :model, keyword_init: true)
+    Assessment = Struct.new(:id, :decision, :reason, :answers, keyword_init: true) do
+      # Rounded for reading; the exact numbers stay in answers.
+      def numbers
+        answers.map do |name, value|
+          value.is_a?(Hash) ? "#{name}=#{value[:choice]}/#{round(value[:confidence])}" : "#{name}=#{round(value)}"
+        end.join(' ')
+      end
+
+      private
+
+      def round(value)
+        value.is_a?(Numeric) ? value.round(2) : value
+      end
+    end
+    # answers — every answer by question key, for dropping duplicates once
+    # the verdicts of Jev and of the LLM are merged.
+    Result = Struct.new(:assessments, :answers, :requests, :model, keyword_init: true)
     Request = Struct.new(:candidates, :state, :questions, keyword_init: true)
     # What the requests of one assessment gathered.
     Asked = Struct.new(:answers, :unfit, :requests, :model, keyword_init: true)
@@ -66,6 +86,17 @@ module Aireview
     # duplicate_of_<id> answer that names another kept id with enough
     # confidence. In a group of duplicates the most severe one stays, on a
     # tie the one generate listed first. Returns {dropped id => kept id}.
+    # The client and the critic as the config sets them up; scrub — the
+    # secret scrubber of the context.
+    def self.build(config:, scrub:, logger:)
+      new(client: JevClient.new(config: config, logger: logger), thresholds: config.jev_thresholds,
+          review_instructions: config.review_instructions, scrub: scrub, logger: logger)
+    end
+
+    def self.decision_templates
+      QUESTIONS.slice(*DECISION_QUESTIONS)
+    end
+
     def self.duplicates(kept, answers, threshold:)
       ids = kept.map { |candidate| field(candidate, 'id') }
       rank = kept.to_h do |candidate|
@@ -103,17 +134,25 @@ module Aireview
     end
 
     def self.field(candidate, key)
-      (candidate[key] || candidate[key.to_sym]).to_s
+      (candidate[key] || candidate[key.to_sym]).to_s.strip
     end
 
-    def assess(context:, candidates:)
+    # dedupe — false when the caller merges the verdicts with the LLM ones
+    # first and drops duplicates over the whole set (JevStage).
+    def assess(context:, candidates:, dedupe: true)
       candidates = candidates.map { |candidate| normalize(candidate) }
       sections = diff_sections(context.diff_text)
       asked = Asked.new(answers: {}, unfit: [], requests: 0, model: nil)
       plan_requests(context, candidates, sections).each { |request| ask(request, asked, context, sections) }
       assessments = candidates.map { |candidate| decide(candidate, asked.answers, asked.unfit) }
-      Result.new(assessments: drop_duplicates(assessments, candidates, asked.answers),
-                 requests: asked.requests, model: asked.model)
+      assessments = drop_duplicates(assessments, candidates, asked.answers) if dedupe
+      Result.new(assessments: assessments, answers: asked.answers, requests: asked.requests, model: asked.model)
+    end
+
+    # The first request as it would be sent, for --dry-run.
+    def preview(context:, candidates:)
+      candidates = candidates.map { |candidate| normalize(candidate) }
+      plan_requests(context, candidates, diff_sections(context.diff_text)).first
     end
 
     private

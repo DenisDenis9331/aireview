@@ -8,6 +8,23 @@
   probabilities are logged next to the Critique verdicts. The report and the
   review key do not change; a Jev failure is a warning. The data is for
   choosing between an LLM and Jev as the critic later.
+- Critique engine (`llm.critique.engine`, `LLM_CRITIQUE_ENGINE`,
+  `--critique-engine`): `model` (the default, the LLM Critique as before) or
+  `jev`. With `jev` Jev decides keep/reject without refining the wording;
+  the candidates it cannot judge, and all of them when Jev fails, go to the
+  LLM Critique with `llm.jev.fallback: model` (the default), or are
+  rejected / fail the run with `fail`. Duplicates are dropped once over the
+  merged verdicts. The report says how Jev took part.
+- The stages that need an LLM follow the engine: with Jev and
+  `fallback: fail` the critique model, its key, its share of the context
+  budget, the pool's critique policy and its `models check` probe are not
+  required. `models check` probes Jev as well (counted only for the engine).
+- The review key includes the Jev version, thresholds, fallback and
+  question templates with `engine: jev`; with the default engine it does not
+  change, except for runs with `--no-critique`: the unused critique policy
+  of the pool (`critique.start`, `rank`, `allow_weaker`) no longer enters
+  their key and is no longer validated, so such a review is redone once.
+- `--dry-run` prints the Jev request for the stub candidate.
 - The gem now packages `lib/**/*.yml` (the Jev questions).
 
 ## 2.1.0

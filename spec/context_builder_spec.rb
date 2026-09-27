@@ -13,7 +13,7 @@ RSpec.describe Aireview::ContextBuilder do
       max_jira_description_chars: 8_000,
       max_jira_comment_chars: 2_000
     }
-    instance_double('Aireview::Config', **defaults.merge(overrides))
+    allow_model_engine(instance_double('Aireview::Config', **defaults.merge(overrides)))
   end
 
   let(:config) { config_double }

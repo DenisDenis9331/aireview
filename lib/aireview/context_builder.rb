@@ -97,9 +97,10 @@ module Aireview
     private
 
     # The minimum over the stages: the context is one per run, so it must fit
-    # into each of them together with its system prompt and reserve.
+    # into each of them together with its system prompt and reserve. Only the
+    # stages that go to an LLM count: Jev as the critic has limits of its own.
     def context_budget(critique:)
-      stages = critique ? STAGES : ['generate']
+      stages = @config.llm_stages(critique: critique)
       budgets = stages.to_h { |stage| [stage, stage_budget(stage)] }
       stage, budget = budgets.min_by { |_, value| value }
       return budget if budget.positive?
@@ -159,7 +160,7 @@ module Aireview
     end
 
     def context_sizes(fixed:, packed:, budget:, diff_budget:, critique:)
-      stages = critique ? STAGES : ['generate']
+      stages = @config.llm_stages(critique: critique)
       {
         context_budget: budget,
         diff_budget: diff_budget,

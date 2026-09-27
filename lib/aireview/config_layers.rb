@@ -65,7 +65,7 @@ module Aireview
 
     # Configuration and plan warnings; the CLI and --dry-run print them.
     def warnings
-      STAGES.flat_map { |stage| stage_provider_warnings(stage) } + routing.warnings + jev_warnings
+      llm_stages.flat_map { |stage| stage_provider_warnings(stage) } + routing.warnings + jev_warnings
     end
 
     # The paths of the file layers, for --dry-run.

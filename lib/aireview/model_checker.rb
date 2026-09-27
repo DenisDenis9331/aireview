@@ -8,6 +8,7 @@ require_relative 'review_pipeline'
 require_relative 'result_parser'
 require_relative 'llm_client'
 require_relative 'output_schemas'
+require_relative 'jev_client'
 
 module Aireview
   # `aireview models check`: every model of both stage chains gets one
@@ -16,6 +17,10 @@ module Aireview
   # validation as in a run: the provider's catalog is not consulted, "the
   # model is listed" does not mean "our request with the schema passes on
   # it". No reserves, quarantine or walking — this is a check, not a review.
+  # Only the stages that need an LLM are checked (Jev with fallback: fail
+  # needs no LLM Critique); Jev gets a probe of its own when it is the
+  # critique engine, and in shadow mode too, but then its result is shown
+  # without counting: the shadow never blocks a release.
   class ModelChecker
     PROBE_MERGE_REQUEST = {
       'title' => 'Fix order total',
@@ -32,6 +37,10 @@ module Aireview
       }
     ].freeze
     PROBE_CANDIDATE_IDS = ['C1'].freeze
+    JEV_PROBE_STATE = 'The order total must include the quantity.'
+    JEV_PROBE_QUESTIONS = {
+      'mentions_quantity' => {'type' => 'noul', 'instructions' => 'Does the text mention a quantity?'}
+    }.freeze
     # ok and skipped do not block a release, everything else does. In strict
     # mode (a runner where Ollama must be running) skipped fails too.
     PASSING = %i[ok skipped].freeze
@@ -52,6 +61,7 @@ module Aireview
       @strict = strict
       client = dependencies[:client]
       sleeper = dependencies[:sleeper]
+      @jev_client = dependencies[:jev_client]
       @logger = logger
       @client = client || LlmClient.new(config: config, logger: logger)
       @sleeper = sleeper || ->(seconds) { sleep(seconds) }
@@ -63,13 +73,14 @@ module Aireview
     # 1 — at least one did not.
     def run
       @config.require_llm_configuration!
-      candidates = STAGES.flat_map { |stage| @config.stage_chain(stage) }.uniq(&:to_s)
+      stages = @config.llm_stages
+      candidates = stages.flat_map { |stage| @config.stage_chain(stage) }.uniq(&:to_s)
       prompts = probe_prompts
-      @out.puts("Checking #{candidates.size} model(s) with the generate and critique schemas")
+      @out.puts("Checking #{candidates.size} model(s) with the #{stages.join(' and ')} schemas")
       results = candidates.flat_map do |candidate|
-        STAGES.map { |stage| check(candidate, stage, prompts).tap { |result| @out.puts(result) } }
+        stages.map { |stage| check(candidate, stage, prompts).tap { |result| @out.puts(result) } }
       end
-      summary(results)
+      summary(results + jev_results)
     end
 
     private
@@ -112,6 +123,36 @@ module Aireview
       )
       key = @config.provider_api_keys(candidate.provider).first
       LlmClient.content(@client.request(request, candidate: candidate, key: key, timeout: @config.llm_timeout.to_f))
+    end
+
+    # The Jev probe counts only when Jev is the critique engine.
+    def jev_results
+      counted = @config.jev_critique?
+      return [] unless counted || @config.jev_shadow?
+
+      result = check_jev
+      result.detail = [result.detail, 'shadow only, not counted'].compact.join('; ') unless counted
+      @out.puts(result)
+      counted ? [result] : []
+    end
+
+    def check_jev
+      name = "jev/#{@config.jev_model}"
+      if Aireview::Utils.blank?(@config.jev_api_key)
+        return Result.new(candidate: name, stage: 'jev', status: :skipped, detail: 'JEV_API_KEY is not set')
+      end
+
+      started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      jev_client.evaluate(state: JEV_PROBE_STATE, questions: JEV_PROBE_QUESTIONS)
+      Result.new(candidate: name, stage: 'jev', status: :ok,
+                 seconds: Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at)
+    rescue JevError => e
+      status = e.status.nil? || [429, 529].include?(e.status) ? :unverified : :failed
+      Result.new(candidate: name, stage: 'jev', status: status, detail: e.message)
+    end
+
+    def jev_client
+      @jev_client ||= JevClient.new(config: @config, logger: @logger)
     end
 
     # missing — the provider has no such model; unverified — the provider

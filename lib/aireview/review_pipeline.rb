@@ -10,12 +10,14 @@ require_relative 'review_renderer'
 require_relative 'review_schemas'
 require_relative 'reviewer'
 require_relative 'jev_shadow'
+require_relative 'jev_stage'
+require_relative 'dry_run_prompts'
 
 module Aireview
   # A review run: context → Generate → anchoring check against the diff →
-  # Critique → report. Invalid JSON is repaired once by the same model; when
-  # the repair is invalid too, the stage restarts on another model with the
-  # original request.
+  # Critique (an LLM, or Jev with llm.critique.engine: jev) → report. Invalid
+  # JSON is repaired once by the same model; when the repair is invalid too,
+  # the stage restarts on another model with the original request.
   class ReviewPipeline
     SchemaError = ResultParser::SchemaError
 
@@ -25,22 +27,22 @@ module Aireview
       Do not use markdown, code fences, comments, or text outside JSON.
       Do not add new review findings.
     PROMPT
-    DRY_RUN_CANDIDATES_JSON = '[{"id":"C1","file":"path/from/diff.rb","line":1,' \
-                              '"quoted_code":"...","problem":"...","why":"...","suggestion":"...",' \
-                              '"category":"bug","severity":"major"}]'
     # Finish reasons after which an unparsable answer gets no repair.
     CUT_OFF_REASONS = {
       max_tokens: 'cut off at the output limit (max_tokens)',
       content_filter: 'blocked by the provider (content_filter)'
     }.freeze
 
-    def initialize(config:, reviewer: nil, context_builder: nil, jev_shadow: nil, logger: Logger.new($stderr))
+    # jev — jev_shadow: and jev_stage: for tests; by default they are built
+    # from the config, the stage only when Jev is the engine.
+    def initialize(config:, reviewer: nil, context_builder: nil, logger: Logger.new($stderr), **jev)
       @config = config
       @parser = ResultParser.new
       @reviewer = reviewer || Reviewer.new(config: config, logger: logger)
       @context_builder = context_builder || ContextBuilder.new(config: config, logger: logger)
-      @jev_shadow = jev_shadow ||
+      @jev_shadow = jev[:jev_shadow] ||
                     JevShadow.new(config: config, scrub: @context_builder.method(:scrub_text), logger: logger)
+      @jev_stage = jev[:jev_stage]
       @logger = logger
     end
 
@@ -67,7 +69,11 @@ module Aireview
                    "(model=#{@reviewer.answered_model('generate')})")
       candidates = check_candidates(context: context, changes: changes, candidates: candidates)
 
-      accepted = critique ? maybe_critique(context: context, candidates: candidates) : skip_critique(candidates)
+      accepted, jev_note = if critique
+                             maybe_critique(context: context, candidates: candidates)
+                           else
+                             skip_critique(candidates)
+                           end
 
       @logger.info("Pipeline finished with #{accepted.size} accepted finding(s)")
 
@@ -76,65 +82,18 @@ module Aireview
         summary: summary,
         coverage: context.coverage,
         fallback_models: @reviewer.fallback_models,
-        critique_weaker: critique && @reviewer.critique_weaker?
+        critique_weaker: critique && @reviewer.critique_weaker?,
+        jev_note: jev_note
       )
     end
 
+    # The prompts of the run and everything --dry-run shows; see DryRunPrompts.
     def dry_run_prompts(merge_request:, changes:, jira_issue: nil, critique: true)
-      @config.require_models!
-
-      context = @context_builder.prepare(
-        merge_request: merge_request,
-        changes: changes,
-        jira_issue: jira_issue,
-        critique: critique
-      )
-      generate_prompt = @context_builder.build_generate_prompt(context)
-      critique_prompt = if critique
-                          @context_builder.build_critique_prompt(context, candidates_json: DRY_RUN_CANDIDATES_JSON)
-                        end
-
-      {
-        generate_prompt: generate_prompt,
-        critique_prompt: critique_prompt,
-        generate_model: @config.generate_model,
-        generate_temperature: @config.generate_temperature,
-        critique_model: @config.critique_model,
-        critique_temperature: @config.critique_temperature,
-        generate_fallbacks: @config.fallback_names('generate'),
-        critique_fallbacks: critique ? @config.fallback_names('critique') : [],
-        sources: setting_sources(critique),
-        config_paths: @config.layer_paths,
-        warnings: @config.warnings,
-        critique_rule: critique ? @config.routing.rule : nil,
-        api_keys: @config.api_key_counts(critique ? STAGES : ['generate']),
-        time_budget: @config.llm_time_budget,
-        overloaded_quarantine: @config.overloaded_quarantine,
-        coverage: context.coverage,
-        sizes: context.sizes,
-        jev_shadow: critique ? jev_shadow_settings : nil
-      }
+      DryRunPrompts.new(config: @config, context_builder: @context_builder, logger: @logger)
+        .build(merge_request: merge_request, changes: changes, jira_issue: jira_issue, critique: critique)
     end
 
     private
-
-    # Only whether the key is set: its value never leaves.
-    def jev_shadow_settings
-      return nil unless @config.jev_shadow?
-
-      {model: @config.jev_model, key: Aireview::Utils.present?(@config.jev_api_key), thresholds: @config.jev_thresholds}
-    end
-
-    # Where the model, provider and reserves of a stage came from, for --dry-run.
-    def setting_sources(critique)
-      (critique ? %w[generate critique] : %w[generate]).to_h do |stage|
-        [stage.to_sym, {
-          model: @config.stage_model_source(stage),
-          provider: @config.stage_provider_source(stage),
-          fallbacks: @config.stage_fallbacks_source(stage)
-        }]
-      end
-    end
 
     # A stage is a request, parsing and one repair by the same model. An
     # invalid result after the repair, like a repair with no requests left,
@@ -165,20 +124,32 @@ module Aireview
       ).check(candidates)
     end
 
+    # Returns the candidates and no report note, like every critique path.
     def skip_critique(candidates, reason = nil)
       @logger.info(['Pipeline critique pass skipped', reason].compact.join(': '))
-      candidates
+      [candidates, nil]
     end
 
     # Critique has nothing to filter without candidates: the LLM request
-    # would waste quota and time.
+    # would waste quota and time. Returns [accepted, note for the report].
     def maybe_critique(context:, candidates:)
       return skip_critique(candidates, 'no candidates') if candidates.empty?
+      return jev_critique(context: context, candidates: candidates) if @config.jev_critique?
 
       @logger.info("Pipeline critique pass started (model=#{@config.critique_model})")
       accepted = critique_candidates(context: context, candidates: candidates)
       @jev_shadow.run(context: context, candidates: candidates, accepted: accepted) if @config.jev_shadow?
-      accepted
+      [accepted, nil]
+    end
+
+    def jev_critique(context:, candidates:)
+      @jev_stage ||= JevStage.new(
+        config: @config, logger: @logger,
+        critic: JevCritic.build(config: @config, scrub: @context_builder.method(:scrub_text), logger: @logger)
+      )
+      llm_critique = ->(subset) { critique_candidates(context: context, candidates: subset) }
+      outcome = @jev_stage.run(context: context, candidates: candidates, llm_critique: llm_critique)
+      [outcome.accepted, outcome.note]
     end
 
     def critique_candidates(context:, candidates:)

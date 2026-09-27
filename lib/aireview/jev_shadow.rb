@@ -3,7 +3,6 @@ require 'json'
 require 'logger'
 require_relative 'errors'
 require_relative 'utils'
-require_relative 'jev_client'
 require_relative 'jev_critic'
 
 module Aireview
@@ -43,16 +42,14 @@ module Aireview
       return @critic if @critic
       return nil if Aireview::Utils.blank?(@config.jev_api_key)
 
-      client = JevClient.new(config: @config, logger: @logger)
-      @critic = JevCritic.new(client: client, thresholds: @config.jev_thresholds,
-                              review_instructions: @config.review_instructions, scrub: @scrub, logger: @logger)
+      @critic = JevCritic.build(config: @config, scrub: @scrub, logger: @logger)
     end
 
     def log(result, critique_kept, seconds)
       result.assessments.each do |assessment|
         critique = critique_kept.include?(assessment.id) ? 'keep' : 'reject'
         @logger.info("Jev shadow #{assessment.id}: #{assessment.decision} (#{assessment.reason}; " \
-                     "#{numbers(assessment.answers)}), critique: #{critique}")
+                     "#{assessment.numbers}), critique: #{critique}")
       end
       @logger.info("Jev shadow: #{summary(result.assessments, critique_kept)} " \
                    "(model=#{result.model}, requests=#{result.requests}, #{format('%.1fs', seconds)})")
@@ -71,12 +68,6 @@ module Aireview
       }
     end
 
-    def numbers(answers)
-      answers.map do |name, value|
-        value.is_a?(Hash) ? "#{name}=#{value[:choice]}/#{round(value[:confidence])}" : "#{name}=#{round(value)}"
-      end.join(' ')
-    end
-
     def summary(assessments, critique_kept)
       decided = assessments.reject { |assessment| assessment.decision == :unverifiable }
       agreed = decided.count do |assessment|
@@ -86,10 +77,6 @@ module Aireview
         "#{decision} #{assessments.count { |assessment| assessment.decision == decision }}"
       end
       "agrees with critique on #{agreed} of #{decided.size} decided candidate(s); #{counts.join(', ')}"
-    end
-
-    def round(value)
-      value.is_a?(Numeric) ? value.round(2) : value
     end
   end
 end

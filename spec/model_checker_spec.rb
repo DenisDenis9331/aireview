@@ -21,7 +21,7 @@ RSpec.describe Aireview::ModelChecker do
       api_key_counts: {'gemini' => 1},
       stage_model_source: nil, stage_fallbacks_source: nil, stage_provider_source: 'built-in', layer_paths: {},
       routing: routing, jev_shadow?: false
-    )
+    ).tap { |double| allow_model_engine(double) }
   end
   let(:routing) do
     Aireview::StageChains.new(
@@ -79,6 +79,63 @@ RSpec.describe Aireview::ModelChecker do
     expect(lines.first).to eq('Checking 3 model(s) with the generate and critique schemas')
     expect(lines[1]).to match(/\Agemini\/gemini-a\s+generate ok \(\d+\.\ds\)\z/)
     expect(lines.last).to eq('Result: 6 ok -> PASSED')
+  end
+
+  describe 'Jev' do
+    let(:jev_client) { instance_double('Aireview::JevClient') }
+    let(:checker) do
+      described_class.new(config: config, out: out, logger: Logger.new(log_output), client: client,
+                          jev_client: jev_client, sleeper: ->(seconds) { sleeps << seconds })
+    end
+
+    before do
+      allow(config).to receive_messages(jev_model: 'jev-1.13.0', jev_api_key: 'j', jev_fallback: 'fail',
+                                        jev_thresholds: {keep_above: 0.5, enough_context: 0.5,
+                                                         version_claim: 0.5, duplicate: 0.5})
+    end
+
+    def jev_engine_without_llm_critique
+      allow(config).to receive(:jev_critique?).and_return(true)
+      allow(config).to receive(:llm_stages).and_return(['generate'])
+      stub_probe(['gemini-a', 'generate'] => [generate_ok], ['qwen', 'generate'] => [generate_ok])
+    end
+
+    it 'probes only the generate stage when Jev decides without a fallback, and Jev itself' do
+      jev_engine_without_llm_critique
+      allow(jev_client).to receive(:evaluate).and_return(Aireview::JevClient::Result.new(answers: {}))
+
+      expect(checker.run).to eq(0)
+      lines = out.string.lines.map(&:strip)
+      expect(lines.first).to eq('Checking 2 model(s) with the generate schemas')
+      expect(lines).to include(match(%r{\Ajev/jev-1\.13\.0\s+jev\s+ok \(\d+\.\ds\)\z}))
+      expect(lines.last).to eq('Result: 3 ok -> PASSED')
+      expect(jev_client).to have_received(:evaluate)
+        .with(state: described_class::JEV_PROBE_STATE, questions: described_class::JEV_PROBE_QUESTIONS)
+    end
+
+    it 'fails the check when Jev is the engine and cannot answer' do
+      jev_engine_without_llm_critique
+      allow(jev_client).to receive(:evaluate)
+        .and_raise(Aireview::JevError.new('Jev API error 529: overloaded', status: 529))
+
+      expect(checker.run).to eq(1)
+      expect(out.string).to match(/jev\s+unverified: Jev API error 529/)
+      expect(out.string.lines.last.strip).to eq('Result: 2 ok, 1 unverified -> FAILED')
+    end
+
+    it 'shows the shadow probe without counting it' do
+      allow(config).to receive(:jev_shadow?).and_return(true)
+      stub_probe(
+        ['gemini-a', 'generate'] => [generate_ok], ['gemini-a', 'critique'] => [critique_ok],
+        ['qwen', 'generate'] => [generate_ok], ['qwen', 'critique'] => [critique_ok],
+        ['gemini-b', 'generate'] => [generate_ok], ['gemini-b', 'critique'] => [critique_ok]
+      )
+      allow(jev_client).to receive(:evaluate).and_raise(Aireview::JevError.new('Jev API error 401: bad key', status: 401))
+
+      expect(checker.run).to eq(0)
+      expect(out.string).to match(/jev\s+failed: Jev API error 401: bad key; shadow only, not counted/)
+      expect(out.string.lines.last.strip).to eq('Result: 6 ok -> PASSED')
+    end
   end
 
   it 'fails on a missing model, an invalid result, an unverifiable one, a fatal error, and skips a stopped Ollama' do
