@@ -122,6 +122,12 @@ module Aireview
       chain(stage).first
     end
 
+    # Critique is ranked against the model that answered in Generate: both
+    # stages walk the pool and the rank is not_below_generate.
+    def ranked_critique?(after)
+      rank_applies?(after)
+    end
+
     def weaker?(critique_candidate, generate_candidate)
       return false unless pool_member?(critique_candidate) && pool_member?(generate_candidate)
 
