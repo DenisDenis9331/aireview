@@ -51,8 +51,8 @@ installed, replace it with plain `aireview`.
 
 Secrets live in environment variables or in a local `.env` file. The models of
 both stages come from the defaults shipped in the Docker image (see "Defaults
-shipped in the image"); outside the image they are set in `.env` or
-`.aireview.yml`:
+shipped in the image"); a gem or a checkout falls back to the same file
+until you set models of your own in `.env` or `.aireview.yml`:
 
 ```bash
 GITLAB_URL=https://gitlab.company.com
@@ -107,8 +107,13 @@ Models, timeouts and the report language are baked into the image as
 project in an organization has nothing to configure: no `.aireview.yml`, no
 variables with model names. Changing the model for every project is one
 edit of that file and a new image release. Outside the image the variable is
-unset and the layer does not exist, so local runs are unaffected; point
-`AIREVIEW_DEFAULTS` at any file to get the same layer elsewhere. The
+unset; then the gem (or the checkout) uses its own `config/defaults.yml` as
+the `bundled defaults` layer, but only while neither `.aireview.yml`, the
+environment nor a CLI flag (`--generate-model`, `--critique-model`) names a
+model (`llm.models` or a stage `model`). So
+`gem install aireview` plus an API key is enough to run a review, and a
+local setup with models of its own is not affected. Point
+`AIREVIEW_DEFAULTS` at any file to get the image layer elsewhere. The
 defaults define a shared pool of five Gemini models (see "Shared model
 pool"): Generate starts from a mid-range model and goes round the pool,
 Critique takes the strongest live model not below the one Generate answered
@@ -118,7 +123,9 @@ release.
 The configuration layers, weakest first:
 
 1. built-in values (`Config::DEFAULTS`);
-2. image defaults — the file from `AIREVIEW_DEFAULTS`; no variable, no layer;
+2. image defaults — the file from `AIREVIEW_DEFAULTS`; without the variable,
+   the bundled `config/defaults.yml` when no upper layer (CLI included) names
+   a model;
 3. the project's `.aireview.yml`;
 4. environment variables (`LLM_GENERATE_MODEL` and the rest);
 5. CLI flags (`--generate-model`, `--critique-model`, the temperatures).

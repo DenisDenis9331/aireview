@@ -12,9 +12,10 @@ require_relative 'config'
 
 module Aireview
   # Builds a Config from layers: built-in values, image defaults
-  # (AIREVIEW_DEFAULTS), the project's .aireview.yml (searched upwards from
-  # cwd), env. Everything that knows environment variable names and file
-  # formats lives here; Config only answers questions about merged data.
+  # (AIREVIEW_DEFAULTS, or the bundled config/defaults.yml when no upper layer
+  # names a model), the project's .aireview.yml (searched upwards from cwd),
+  # env. Everything that knows environment variable names and file formats
+  # lives here; Config only answers questions about merged data.
   module ConfigLoader
     ENV_MAPPING = {
       'gitlab_url' => 'GITLAB_URL',
@@ -54,6 +55,7 @@ module Aireview
     ].freeze
     LLM_STAGE_ENV_SUFFIXES = %w[PROVIDER MODEL TEMPERATURE MAX_PROMPT_CHARS FALLBACK_MODEL START].freeze
     IMAGE_DEFAULTS_ENV = 'AIREVIEW_DEFAULTS'
+    BUNDLED_DEFAULTS = File.expand_path('../../config/defaults.yml', __dir__)
 
     module_function
 
@@ -61,11 +63,11 @@ module Aireview
       load_dotenv(cwd)
 
       file_path = config_path ? File.expand_path(config_path, cwd) : discover_file(cwd, '.aireview.yml')
+      upper = [file_layer(file_path), ConfigLayers::Layer.new(name: ConfigLayers::ENV_LAYER, data: env_config(env))]
       layers = [
         ConfigLayers::Layer.new(name: ConfigLayers::BUILT_IN_LAYER, data: Config::DEFAULTS),
-        image_defaults_layer(env),
-        file_layer(file_path),
-        ConfigLayers::Layer.new(name: ConfigLayers::ENV_LAYER, data: env_config(env))
+        image_defaults_layer(env) || bundled_defaults_layer(upper.compact),
+        *upper
       ].compact
 
       Config.new(config_path: File.file?(file_path) ? file_path : nil, logger: logger, layers: layers)
@@ -116,6 +118,24 @@ module Aireview
       raise ConfigError, "#{IMAGE_DEFAULTS_ENV} points to a missing file: #{path}" unless File.file?(path)
 
       ConfigLayers::Layer.new(name: ConfigLayers::IMAGE_LAYER, path: path, data: read_yaml(path))
+    end
+
+    # Outside the image (gem install, a checkout) the same defaults.yml stands
+    # in for the image layer, but only when no upper layer names a model (CLI
+    # models are checked in Config#with_overrides): a setup with models of its
+    # own keeps working exactly as before, and one without models would fail
+    # with "LLM models are required" anyway.
+    def bundled_defaults_layer(upper)
+      return nil if upper.any? { |layer| models_configured?(layer.data) }
+      return nil unless File.file?(BUNDLED_DEFAULTS)
+
+      ConfigLayers::Layer.new(name: ConfigLayers::BUNDLED_LAYER, path: BUNDLED_DEFAULTS,
+                              data: read_yaml(BUNDLED_DEFAULTS))
+    end
+
+    def models_configured?(data)
+      Aireview::Utils.present?(Aireview::Utils.dig(data, 'llm', 'models')) ||
+        STAGES.any? { |stage| Aireview::Utils.present?(Aireview::Utils.dig(data, 'llm', stage, 'model')) }
     end
 
     def file_layer(file_path)

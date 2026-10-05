@@ -58,9 +58,10 @@ RSpec.describe Aireview::Config do
 
     it 'uses 60 seconds as the default LLM timeout' do
       Dir.mktmpdir do |dir|
+        # A model of its own keeps the bundled defaults (timeout 180) out.
         config = described_class.load(
           cwd: dir,
-          env: {},
+          env: {'LLM_GENERATE_MODEL' => 'gemini-3.7-flash'},
           logger: Logger.new(nil)
         )
 

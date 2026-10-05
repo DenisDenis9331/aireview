@@ -19,6 +19,54 @@ RSpec.describe Aireview::ConfigLoader do
     end
   end
 
+  describe 'bundled defaults' do
+    it 'stand in for the image layer when no layer names a model' do
+      Dir.mktmpdir do |dir|
+        config = described_class.load(cwd: dir, env: {'LLM_TIMEOUT' => '30'}, logger: Logger.new(nil))
+
+        expect(config.layers.map(&:name)).to eq(['built-in', 'bundled defaults', 'env'])
+        expect(config.layer_paths).to eq('bundled defaults' => described_class::BUNDLED_DEFAULTS)
+        expect(config.source_of('llm', 'models')).to eq('bundled defaults')
+        expect(config.llm_timeout).to eq(30.0)
+        expect { config.require_models! }.not_to raise_error
+      end
+    end
+
+    it 'stay out when .aireview.yml or env names a model' do
+      Dir.mktmpdir do |dir|
+        [{'LLM_MODELS' => 'ollama/q:7b'}, {'LLM_CRITIQUE_MODEL' => 'c'}].each do |env|
+          expect(described_class.load(cwd: dir, env: env, logger: Logger.new(nil)).layers.map(&:name))
+            .to eq(%w[built-in env])
+        end
+
+        File.write(File.join(dir, '.aireview.yml'), "llm:\n  generate:\n    model: g\n")
+        expect(described_class.load(cwd: dir, env: {}, logger: Logger.new(nil)).layers.map(&:name))
+          .to eq(['built-in', '.aireview.yml', 'env'])
+      end
+    end
+
+    it 'stay out when the CLI names a model, keeping the configured fallbacks' do
+      Dir.mktmpdir do |dir|
+        env = {'LLM_PROVIDER' => 'ollama', 'LLM_GENERATE_FALLBACK_MODEL' => 'backup-local'}
+        config = described_class.load(cwd: dir, env: env, logger: Logger.new(nil))
+          .with_overrides(generate_model: 'primary-local', no_critique: true)
+
+        expect(config.layers.map(&:name)).to eq(%w[built-in env cli])
+        expect(config.stage_chain('generate').map(&:to_s)).to eq(%w[ollama/primary-local ollama/backup-local])
+      end
+    end
+
+    it 'give way to AIREVIEW_DEFAULTS' do
+      Dir.mktmpdir do |dir|
+        File.write(File.join(dir, 'image.yml'), "review_language: en\n")
+        config = described_class.load(cwd: dir, env: {'AIREVIEW_DEFAULTS' => File.join(dir, 'image.yml')},
+                                      logger: Logger.new(nil))
+
+        expect(config.layers.map(&:name)).to eq(['built-in', 'image defaults', 'env'])
+      end
+    end
+  end
+
   it 'parses env into the same shape as the YAML' do
     env = {
       'LLM_PROVIDER' => 'gemini', 'LLM_TEMPERATURE' => '0.2', 'LLM_TIME_BUDGET' => '600',

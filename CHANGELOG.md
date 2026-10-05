@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- `gem install aireview` works without configuring models: when
+  `AIREVIEW_DEFAULTS` is unset and neither `.aireview.yml`, the environment
+  nor `--generate-model`/`--critique-model` names a model, the gem's own `config/defaults.yml` is loaded
+  as the `bundled defaults` layer (the image defaults: the Gemini pool,
+  timeouts, language). Setups with models of their own are unchanged.
+
 ## 2.2.1
 
 - OpenAI reasoning models (`o1`, `o3`, `gpt-5`…) and search models
