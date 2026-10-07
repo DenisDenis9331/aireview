@@ -90,6 +90,18 @@ module Aireview
       no_fallbacks: false,
       no_critique: false
     )
+      # A model from the CLI names a model too, so the bundled defaults step
+      # aside as they do for .aireview.yml and env (see ConfigLoader): with
+      # their pool loaded, a CLI model outside it would drop the stage's
+      # configured fallbacks.
+      if bundled_defaults_under?(generate_model, critique_model)
+        return without_bundled_defaults.with_overrides(
+          generate_model: generate_model, critique_model: critique_model,
+          generate_temperature: generate_temperature, critique_temperature: critique_temperature,
+          critique_engine: critique_engine, no_fallbacks: no_fallbacks, no_critique: no_critique
+        )
+      end
+
       llm_config = {
         'generate' => stage_overrides(model: generate_model, temperature: generate_temperature),
         'critique' => stage_overrides(model: critique_model, temperature: critique_temperature)
@@ -256,6 +268,15 @@ module Aireview
     # model from the pool becomes the start and the stage's own model and
     # fallbacks are reset; a model outside the pool is a single chain, start
     # and fallbacks are reset.
+    def bundled_defaults_under?(*cli_models)
+      cli_models.any? && @layers.any? { |layer| layer.name == ConfigLayers::BUNDLED_LAYER }
+    end
+
+    def without_bundled_defaults
+      layers = @layers.reject { |layer| layer.name == ConfigLayers::BUNDLED_LAYER }
+      self.class.new(config_path: config_path, logger: @logger, layers: layers)
+    end
+
     def stage_overrides(model:, temperature:)
       overrides = {'temperature' => temperature}.compact
       return overrides unless model

@@ -11,6 +11,11 @@
   self-check remains when Generate answered with the strongest model, the
   stronger ones are out until the end of the run, or `critique.start` names
   that model; own chains and `rank: any` keep their order.
+- `gem install aireview` works without configuring models: when
+  `AIREVIEW_DEFAULTS` is unset and neither `.aireview.yml`, the environment
+  nor `--generate-model`/`--critique-model` names a model, the gem's own `config/defaults.yml` is loaded
+  as the `bundled defaults` layer (the image defaults: the Gemini pool,
+  timeouts, language). Setups with models of their own are unchanged.
 
 ## 2.2.1
 

@@ -4,14 +4,16 @@ require_relative 'utils'
 
 module Aireview
   # Configuration layers in ascending priority: built-in values, image
-  # defaults (AIREVIEW_DEFAULTS), the project's .aireview.yml, env, CLI. The
-  # layer name is shown by --dry-run, so that it is clear where a model came from.
+  # defaults (AIREVIEW_DEFAULTS) or bundled defaults, the project's
+  # .aireview.yml, env, CLI. The layer name is shown by --dry-run, so that it
+  # is clear where a model came from.
   module ConfigLayers
     Layer = Struct.new(:name, :path, :data, keyword_init: true)
 
     BUILT_IN_LAYER = 'built-in'
     DATA_LAYER = 'config'
     IMAGE_LAYER = 'image defaults'
+    BUNDLED_LAYER = 'bundled defaults'
     FILE_LAYER = '.aireview.yml'
     ENV_LAYER = 'env'
     CLI_LAYER = 'cli'
