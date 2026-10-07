@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- In a ranked pool (`rank: not_below_generate`) Critique no longer falls
+  back to the model that answered in Generate while a model its chain
+  prefers is only quarantined: it waits for that model when the wait plus a
+  full request (`llm.timeout`) fits into the time budget, and logs
+  `waiting … instead of critiquing with …`. Before, an overload during
+  Generate could turn the critique into a self-check by the same model. A
+  self-check remains when Generate answered with the strongest model, the
+  stronger ones are out until the end of the run, or `critique.start` names
+  that model; own chains and `rank: any` keep their order.
 - `gem install aireview` works without configuring models: when
   `AIREVIEW_DEFAULTS` is unset and neither `.aireview.yml`, the environment
   nor `--generate-model`/`--critique-model` names a model, the gem's own `config/defaults.yml` is loaded

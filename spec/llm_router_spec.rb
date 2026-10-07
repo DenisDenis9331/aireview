@@ -178,14 +178,92 @@ RSpec.describe Aireview::LlmRouter do
                               starts: {'generate' => 'gemini-flash'}, allow_weaker: allow_weaker)
     end
 
+    # A self-check by the same model is the last resort: only when the
+    # stronger model is out until the end of the run (here the provider has
+    # no such model).
     it 'runs the critique on the first live model not below the one that answered in generate' do
       run(script: {'gemini-flash' => ['from flash']})
-      _, calls = run(stage: 'critique', script: {'gemini-pro' => [overloaded_error, overloaded_error], 'gemini-flash' => ['critique']})
+      _, calls = run(stage: 'critique', script: {'gemini-pro' => [missing_model_error('gemini-pro')],
+                                                 'gemini-flash' => ['critique']})
 
-      expect(calls).to eq(%w[gemini-pro@0 gemini-pro@30 gemini-flash@30])
+      expect(calls).to eq(%w[gemini-pro@0 gemini-flash@0])
       expect(router.answered('critique')).to eq('gemini/gemini-flash (2/2)')
       expect(router.critique_weaker?).to be(false)
       expect(router.fallback_models).to eq('critique' => 'gemini/gemini-flash')
+    end
+
+    # Generate moved from the overloaded flash to lite; in Critique pro is
+    # overloaded too while flash is still quarantined. Before, lite itself
+    # did the critique: the same model as Generate.
+    it 'waits for a stronger model in quarantine rather than critiquing with the generate model' do
+      run(script: {'gemini-flash' => [overloaded_error, overloaded_error], 'gemini-lite' => ['from lite']})
+      _, calls = run(stage: 'critique', script: {
+        'gemini-pro' => [overloaded_error, overloaded_error], 'gemini-flash' => ['critique'], 'gemini-lite' => ['self']
+      })
+
+      expect(calls).to eq(%w[gemini-pro@30 gemini-pro@60 gemini-flash@150])
+      expect(router.answered('critique')).to eq('gemini/gemini-flash (2/3)')
+      expect(log_output.string).to include(
+        'LLM critique: waiting 90s for gemini/gemini-flash instead of critiquing with gemini/gemini-lite'
+      )
+    end
+
+    # The wait plus a full request (llm_timeout 60 in this config) must fit
+    # into what is left: 90 s of waiting with 120 s left does not.
+    it 'critiques with the generate model when waiting would leave no time for the request' do
+      allow(config).to receive(:llm_time_budget).and_return(180)
+      run(script: {'gemini-flash' => [overloaded_error, overloaded_error], 'gemini-lite' => ['from lite']})
+      _, calls = run(stage: 'critique', script: {
+        'gemini-pro' => [overloaded_error, overloaded_error], 'gemini-lite' => ['self']
+      })
+
+      expect(calls).to eq(%w[gemini-pro@30 gemini-pro@60 gemini-lite@60])
+    end
+
+    it 'critiques with the generate model when it is the strongest one' do
+      run(script: {'gemini-flash' => [overloaded_error, overloaded_error],
+                   'gemini-lite' => [overloaded_error, overloaded_error], 'gemini-pro' => ['from pro']})
+      _, calls = run(stage: 'critique', script: {'gemini-pro' => ['self']})
+
+      expect(calls).to eq(%w[gemini-pro@60])
+    end
+
+    # The wait is for a stronger model the critique chain itself prefers and
+    # that is only quarantined; the chain's own order otherwise stands.
+    context 'with an own critique chain that starts with the generate model' do
+      let(:models) { %w[gemini-pro gemini-flash] }
+      let(:routing) do
+        own = Aireview::StageChains.new('generate' => [candidate('gemini-flash')],
+                                        'critique' => [candidate('gemini-flash'), candidate('gemini-pro')])
+        Aireview::ModelPool.new(items: models, provider: 'gemini', limits: {'generate' => 400_000, 'critique' => 400_000},
+                                own_chains: own)
+      end
+
+      it 'keeps the chain order' do
+        run(script: {'gemini-flash' => ['from flash']})
+        _, calls = run(stage: 'critique', script: {'gemini-flash' => ['critique'], 'gemini-pro' => ['pro']})
+
+        expect(calls).to eq(%w[gemini-flash@0])
+        expect(log_output.string).not_to include('instead of critiquing')
+      end
+    end
+
+    %w[not_below_generate any].each do |rank|
+      context "with an explicit critique start equal to the generate model (rank: #{rank})" do
+        let(:models) { %w[gemini-pro gemini-flash] }
+        let(:routing) do
+          Aireview::ModelPool.new(items: models, provider: 'gemini', limits: {'generate' => 400_000, 'critique' => 400_000},
+                                  starts: {'generate' => 'gemini-flash', 'critique' => 'gemini-flash'}, rank: rank)
+        end
+
+        it 'keeps the start' do
+          run(script: {'gemini-flash' => ['from flash']})
+          _, calls = run(stage: 'critique', script: {'gemini-flash' => ['critique'], 'gemini-pro' => ['pro']})
+
+          expect(calls).to eq(%w[gemini-flash@0])
+          expect(log_output.string).not_to include('instead of critiquing')
+        end
+      end
     end
 
     it 'fails the critique instead of falling below generate when weaker models are not allowed' do
@@ -228,8 +306,8 @@ RSpec.describe Aireview::LlmRouter do
       it 'reports a critique that ran below generate' do
         run(script: {'gemini-flash' => ['from flash']})
         run(stage: 'critique', script: {
-          'gemini-pro' => [overloaded_error, overloaded_error], 'gemini-flash' => [overloaded_error, overloaded_error],
-          'gemini-lite' => ['weak']
+          'gemini-pro' => [overloaded_error, overloaded_error, overloaded_error],
+          'gemini-flash' => [overloaded_error, overloaded_error], 'gemini-lite' => ['weak']
         })
 
         expect(router.critique_weaker?).to be(true)

@@ -498,6 +498,15 @@ Environment equivalents: `LLM_MODELS=gemini/gemini-3.8-flash,gemini/gemini-3.7-f
 `LLM_GENERATE_START`, `LLM_CRITIQUE_START`, `LLM_CRITIQUE_RANK`,
 `LLM_CRITIQUE_ALLOW_WEAKER`. The rules:
 
+- with the rank applied (`rank: not_below_generate`, both stages in the
+  pool), a critique by the same model that answered in Generate is the last
+  resort: when a model the critique chain puts before it is only
+  quarantined and a full request (`llm.timeout`) still fits into the time
+  budget after its release, Critique waits for it (the log says `waiting …
+  instead of critiquing with …`). A self-check remains when Generate
+  answered with the strongest model of the pool, the stronger ones are out
+  until the end of the run, or `critique.start` names that model itself;
+  stages with chains of their own and `rank: any` keep their order;
 - no permitted live model for Critique and `allow_weaker: false` — the run
   fails, candidates are not published without a critique; with
   `allow_weaker: true` Critique goes below Generate and the report gets a
