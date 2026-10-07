@@ -85,6 +85,10 @@ module Aireview
       false
     end
 
+    def ranked_critique?(_after)
+      false
+    end
+
     def signature
       nil
     end

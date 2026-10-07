@@ -179,7 +179,7 @@ module Aireview
       ensure_time_left!(stage, bare_route(slots.first.candidate, slots.first.index), visits)
       moment = now
       ready = slots.find { |slot| state(slot.candidate).quarantine_left(moment) <= 0 }
-      return ready if ready
+      return stronger_critic(stage, slots, ready, moment) || ready if ready
 
       slot = slots.min_by { |item| state(item.candidate).quarantine_left(moment) }
       wait = state(slot.candidate).quarantine_left(moment)
@@ -193,6 +193,40 @@ module Aireview
                           stage: stage, wait: wait, model: slot.candidate))
       pause(wait)
       slot
+    end
+
+    # A critique by the model that answered in Generate is the last resort
+    # of a ranked pool. When a model the critique chain puts before it is
+    # only quarantined and its release fits into the budget, wait for it:
+    # otherwise an overload in Generate turns the critique into a self-check
+    # (Generate and Critique on one model). Only the chain's own preference
+    # counts, so an explicit critique.start stays first; own chains and
+    # rank: any are not ranked and keep their order. Models out until the
+    # end of the run are not in slots. nil — nobody to wait for.
+    def stronger_critic(stage, slots, ready, moment)
+      generate = self_critique(stage, ready)
+      return nil unless generate
+
+      stronger = slots.select { |item| item.index < ready.index }
+      slot = stronger.min_by { |item| state(item.candidate).quarantine_left(moment) }
+      wait = slot && state(slot.candidate).quarantine_left(moment)
+      # The wait is optional: a full request must still fit after it, or a
+      # critique by the available model beats a failed review.
+      return nil if wait.nil? || wait + @config.llm_timeout.to_f > remaining_time
+
+      @logger.warn(format('LLM critique: waiting %<wait>.0fs for %<model>s instead of critiquing with %<same>s, ' \
+                          'the model that answered in generate', wait: wait, model: slot.candidate, same: generate))
+      pause(wait)
+      slot
+    end
+
+    # The Generate model when it is the only one ready for a ranked
+    # Critique; else nil.
+    def self_critique(stage, ready)
+      generate = @used['generate']&.candidate
+      return nil unless stage == 'critique' && generate&.same_model?(ready.candidate)
+
+      generate if @routing.ranked_critique?(generate)
     end
 
     # On :next_model hands over the current key: an overload is a property of
