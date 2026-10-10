@@ -2,6 +2,7 @@
 require_relative 'errors'
 require_relative 'utils'
 require_relative 'gitlab_client'
+require_relative 'github_client'
 
 module Aireview
   # The only place that knows which platform a review target belongs to:
@@ -9,6 +10,8 @@ module Aireview
   # name the target in messages. No requests and no response handling here —
   # those live in the clients.
   module Platform
+    PLATFORMS = %i[gitlab github].freeze
+
     module_function
 
     def client(config:, target:, logger:)
@@ -19,16 +22,26 @@ module Aireview
           token: config.require_gitlab_token!,
           logger: logger
         )
+      when :github
+        GithubClient.new(
+          api_url: config.github_api_url || GithubClient.api_url_for(target.base_url),
+          token: config.require_github_token!,
+          review_author: config.github_review_author,
+          logger: logger
+        )
       end
     end
 
     # A Retry of the GitLab job, not a new pipeline: see
-    # GitlabClient#retried_job?. Outside GitLab CI nothing is a retry.
+    # GitlabClient#retried_job?. GitHub numbers the attempts of a workflow
+    # run itself: "Re-run jobs" makes attempt 2. Outside CI nothing is a retry.
     def retried_run?(client:, target:, env:)
       case platform(target)
       when :gitlab
         project_id, job_id = gitlab_job(env)
         project_id ? client.retried_job?(project_id, job_id) : false
+      when :github
+        github_actions?(env) && env['GITHUB_RUN_ATTEMPT'].to_i > 1
       end
     end
 
@@ -36,24 +49,35 @@ module Aireview
       case platform(target)
       when :gitlab
         gitlab_job(env) ? 'retry the job to update' : 'use --force to review again'
+      when :github
+        github_actions?(env) ? 're-run the workflow to update' : 'use --force to review again'
       end
     end
 
     def label(target)
       case platform(target)
       when :gitlab then "MR #{target.project_path}!#{target.iid}"
+      when :github then "PR #{target.project_path}##{target.iid}"
       end
     end
 
     def name(target)
       case platform(target)
       when :gitlab then 'GitLab'
+      when :github then 'GitHub'
+      end
+    end
+
+    def noun(target)
+      case platform(target)
+      when :gitlab then 'merge request'
+      when :github then 'pull request'
       end
     end
 
     def platform(target)
       platform = target.platform
-      raise ArgumentError, "Unsupported platform: #{platform.inspect}" unless platform == :gitlab
+      raise ArgumentError, "Unsupported platform: #{platform.inspect}" unless PLATFORMS.include?(platform)
 
       platform
     end
@@ -66,5 +90,10 @@ module Aireview
       [project_id, job_id]
     end
     private_class_method :gitlab_job
+
+    def github_actions?(env)
+      env['GITHUB_ACTIONS'] == 'true'
+    end
+    private_class_method :github_actions?
   end
 end

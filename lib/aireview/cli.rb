@@ -111,6 +111,7 @@ module Aireview
     def load_review_context(parser_result, config, options)
       client = Platform.client(config: config, target: parser_result, logger: @logger)
       merge_request, changes = fetch_merge_request_data(client, parser_result)
+      merge_request = note_files_not_returned(merge_request, changes)
 
       {
         parser_result: parser_result,
@@ -126,6 +127,19 @@ module Aireview
       merge_request = client.fetch_merge_request(parser_result.project_id, parser_result.iid)
       changes = client.fetch_merge_request_changes(parser_result.project_id, parser_result.iid)
       [merge_request, changes]
+    end
+
+    # A platform may return fewer files than the merge request changes
+    # (GitHub lists at most 3000) and report the total as changed_files. The
+    # rest goes into the report as not reviewed: a log line alone would
+    # publish a report that looks complete. Counted before ignore_paths.
+    def note_files_not_returned(merge_request, changes)
+      total = merge_request['changed_files']
+      missing = total.is_a?(Integer) ? total - changes.size : 0
+      return merge_request unless missing.positive?
+
+      @logger.warn("Only #{changes.size} of #{total} changed files were returned; the rest is not reviewed")
+      merge_request.merge('files_not_returned' => missing)
     end
 
     # The diff travels on as files, not as one string: the context budget
@@ -225,7 +239,7 @@ module Aireview
               elsif existing[:key].nil? then "review freshness is unknown: #{hint}"
               else "review inputs changed: #{hint}"
               end
-      "merge request already reviewed (review_mode=once), #{state}"
+      "#{Platform.noun(target)} already reviewed (review_mode=once), #{state}"
     end
 
     def retried_run?(context)
@@ -258,8 +272,8 @@ module Aireview
       changed = after.keys.reject { |field| after[field] == before[field] }
       return false if changed.empty?
 
-      @logger.warn("Merge request changed while review was running (#{changed.join(', ')}); " \
-                   'skipping publication')
+      noun = Platform.noun(context[:parser_result]).capitalize
+      @logger.warn("#{noun} changed while review was running (#{changed.join(', ')}); skipping publication")
       true
     end
 
@@ -293,7 +307,7 @@ module Aireview
       }
 
       OptionParser.new do |parser|
-        parser.banner = 'Usage: aireview review <merge_request_url> [options]'
+        parser.banner = 'Usage: aireview review <merge_or_pull_request_url> [options]'
 
         add_llm_options(parser, options)
         add_publication_options(parser, options)
@@ -335,7 +349,7 @@ module Aireview
     end
 
     def add_publication_options(parser, options)
-      parser.on('--post', 'Post review back to GitLab merge request') do
+      parser.on('--post', 'Post review back to the merge or pull request') do
         options[:post] = true
       end
 
@@ -344,7 +358,7 @@ module Aireview
         options[:review_mode] = value
       end
 
-      parser.on('--force', 'Review again even if the merge request was already reviewed') do
+      parser.on('--force', 'Review again even if the merge or pull request was already reviewed') do
         options[:force] = true
       end
     end
@@ -379,16 +393,16 @@ module Aireview
     def help
       <<~HELP
         Usage:
-          aireview review <merge_request_url> [options]
+          aireview review <merge_or_pull_request_url> [options]
           aireview models check [--config PATH] [--strict] [--verbose]
 
         Commands:
-          review        Run review for a GitLab merge request URL
+          review        Run review for a GitLab merge request or GitHub pull request URL
           models check  Send a probe request with the generate and critique schemas
                         to every model of both stages; exit 1 if any fails
 
         Options:
-          --post           Post review as a merge request note
+          --post           Post review as a merge or pull request comment
           --generate-model MODEL
                            Override Generate pass model
           --critique-model MODEL
@@ -402,7 +416,7 @@ module Aireview
           --config PATH    Path to .aireview.yml
           --review-mode MODE
                            How to treat an existing review: update (default) or once
-          --force          Review again even if the merge request was already reviewed
+          --force          Review again even if the merge or pull request was already reviewed
           --no-jira        Disable Jira enrichment
           --dry-run        Print prompts without LLM calls
           --no-critique    Skip second LLM critique pass
