@@ -72,6 +72,18 @@ RSpec.describe Aireview::ReviewRenderer do
     expect(result.index('This report was generated')).to be > result.index('## Not reviewed')
   end
 
+  # GitHub lists at most 3000 files of a pull request and does not say
+  # which ones it left out: the report can only count them.
+  it 'counts the files the platform did not return' do
+    coverage = Aireview::ContextBudget::Coverage.empty
+    coverage.files_not_returned = 412
+
+    result = described_class.new.render([], summary: 'x', coverage: coverage)
+
+    expect(result).to include('ok. Partial review: 412 files not returned by the platform.')
+    expect(result).to include("## Not reviewed\n\n- 412 files not returned by the platform\n")
+  end
+
   it 'keeps the result about findings and renders coverage labels in Russian' do
     coverage = Aireview::ContextBudget::Coverage.empty
     coverage.files_not_shown << 'app/a.rb'

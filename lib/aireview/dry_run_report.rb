@@ -116,6 +116,9 @@ module Aireview
       list('files not shown', coverage.files_not_shown)
       coverage.files_partial.each { |file| @out.puts("  #{file[:path]}: #{file[:shown]} of #{file[:total]} hunks") }
       list('diff not available', coverage.files_unavailable)
+      return if coverage.files_not_returned.zero?
+
+      @out.puts("  files not returned by the platform: #{coverage.files_not_returned}")
     end
 
     def render_reserves(dry_run)
