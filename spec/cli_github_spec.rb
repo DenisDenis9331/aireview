@@ -183,4 +183,41 @@ RSpec.describe 'aireview review for a GitHub pull request' do
     expect(run_cli(client)).to eq(0)
     expect(err.string).to include('Only 1 of 3412 changed files were returned; the rest is not reviewed')
   end
+
+  # The returned files and so the prompts stay the same while the pull
+  # request grows past what GitHub lists: the comment must gain the warning.
+  context 'when files stop being returned' do
+    let(:pipeline) do
+      Aireview::ReviewPipeline.new(config: config, logger: Logger.new(File::NULL)).tap do |real|
+        allow(real).to receive(:run).and_return('review text')
+      end
+    end
+
+    def posted_review
+      client = FakeGithubClient.new(pull_request: pull_request, changes: changes)
+      run_cli(client)
+      client.created.fetch(0)
+    end
+
+    def rerun(changed_files, body)
+      previous = {'id' => 3, 'body' => body, 'system' => false, 'author' => {'id' => 'github-actions[bot]'}}
+      FakeGithubClient.new(pull_request: pull_request.merge('changed_files' => changed_files),
+                           changes: changes, comments: [previous]).tap { |client| run_cli(client) }
+    end
+
+    it 'keeps a complete review up to date while every file is returned' do
+      client = rerun(1, posted_review)
+
+      expect(client.updated).to be_empty
+      expect(out.string).to include('Review skipped: existing review is up to date')
+    end
+
+    it 'updates the review once part of the files is not returned' do
+      previous = posted_review
+      client = rerun(3412, previous)
+
+      expect(client.updated.size).to eq(1)
+      expect(Aireview::ReviewMarker.extract(client.updated[0][1])).not_to eq(Aireview::ReviewMarker.extract(previous))
+    end
+  end
 end
