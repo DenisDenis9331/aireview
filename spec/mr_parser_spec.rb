@@ -10,6 +10,7 @@ RSpec.describe Aireview::MrParser do
       expect(result.project_path).to eq('team/project')
       expect(result.project_id).to eq('team%2Fproject')
       expect(result.iid).to eq(123)
+      expect(result.platform).to eq(:gitlab)
     end
 
     it 'rejects an invalid url' do

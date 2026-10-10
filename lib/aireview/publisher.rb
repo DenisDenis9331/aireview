@@ -5,8 +5,9 @@ module Aireview
   class Publisher
     PREFIX = '**aireview review**'
 
-    def initialize(gitlab_client:, logger: Logger.new($stderr))
-      @gitlab_client = gitlab_client
+    def initialize(client:, platform_name: 'GitLab', logger: Logger.new($stderr))
+      @client = client
+      @platform_name = platform_name
       @logger = logger
     end
 
@@ -17,7 +18,7 @@ module Aireview
       author_id = current_user_id
       legacy = nil
 
-      @gitlab_client.fetch_merge_request_notes(project_id, iid).each do |note|
+      @client.fetch_merge_request_notes(project_id, iid).each do |note|
         next if note['system']
         next if note.dig('author', 'id') != author_id
 
@@ -35,9 +36,9 @@ module Aireview
 
       if existing
         @logger.info("Updating review note #{existing[:id]}")
-        @gitlab_client.update_merge_request_note(project_id, iid, existing[:id], body)
+        @client.update_merge_request_note(project_id, iid, existing[:id], body)
       else
-        @gitlab_client.post_merge_request_note(project_id, iid, body)
+        @client.post_merge_request_note(project_id, iid, body)
       end
     end
 
@@ -55,8 +56,8 @@ module Aireview
     def current_user_id
       return @current_user_id if defined?(@current_user_id)
 
-      id = @gitlab_client.fetch_current_user['id']
-      raise ApiError, 'GitLab did not return the current user id' if Aireview::Utils.blank?(id)
+      id = @client.fetch_current_user['id']
+      raise ApiError, "#{@platform_name} did not return the current user id" if Aireview::Utils.blank?(id)
 
       @current_user_id = id
     end

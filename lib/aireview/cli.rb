@@ -109,30 +109,22 @@ module Aireview
     end
 
     def load_review_context(parser_result, config, options)
-      gitlab_client = build_gitlab_client(config, parser_result)
-      merge_request, changes = fetch_merge_request_data(gitlab_client, parser_result)
+      client = Platform.client(config: config, target: parser_result, logger: @logger)
+      merge_request, changes = fetch_merge_request_data(client, parser_result)
 
       {
         parser_result: parser_result,
-        gitlab_client: gitlab_client,
+        client: client,
         merge_request: merge_request,
         changes: prepare_changes(changes, config),
         jira_issue: maybe_load_jira_issue(config, merge_request, options)
       }
     end
 
-    def build_gitlab_client(config, parser_result)
-      GitlabClient.new(
-        base_url: config.gitlab_url || parser_result.base_url,
-        token: config.require_gitlab_token!,
-        logger: @logger
-      )
-    end
-
-    def fetch_merge_request_data(gitlab_client, parser_result)
-      @logger.info("Loading MR #{parser_result.project_path}!#{parser_result.iid}")
-      merge_request = gitlab_client.fetch_merge_request(parser_result.project_id, parser_result.iid)
-      changes = gitlab_client.fetch_merge_request_changes(parser_result.project_id, parser_result.iid)
+    def fetch_merge_request_data(client, parser_result)
+      @logger.info("Loading #{Platform.label(parser_result)}")
+      merge_request = client.fetch_merge_request(parser_result.project_id, parser_result.iid)
+      changes = client.fetch_merge_request_changes(parser_result.project_id, parser_result.iid)
       [merge_request, changes]
     end
 
@@ -188,7 +180,11 @@ module Aireview
     def prepare_publication(pipeline, config, context, options)
       return nil unless options[:post]
 
-      publisher = Publisher.new(gitlab_client: context[:gitlab_client], logger: @logger)
+      publisher = Publisher.new(
+        client: context[:client],
+        platform_name: Platform.name(context[:parser_result]),
+        logger: @logger
+      )
       prompts = pipeline.dry_run_prompts(
         merge_request: context[:merge_request],
         changes: context[:changes],
@@ -202,51 +198,38 @@ module Aireview
       )
 
       mode = options[:review_mode] || config.review_mode
-      return :skip if skip_review?(existing, key: key, mode: mode, force: options[:force],
-                                             gitlab_client: context[:gitlab_client])
+      return :skip if skip_review?(existing, key: key, mode: mode, force: options[:force], context: context)
 
       {publisher: publisher, existing: existing, key: key}
     end
 
-    def skip_review?(existing, key:, mode:, force:, gitlab_client:)
+    def skip_review?(existing, key:, mode:, force:, context:)
       return false if existing.nil? || force
 
       up_to_date = existing[:key] == key
-      return false unless up_to_date || (mode == 'once' && !retried_ci_job?(gitlab_client))
+      return false unless up_to_date || (mode == 'once' && !retried_run?(context))
 
-      @out.puts("Review skipped: #{skip_reason(existing, up_to_date: up_to_date, mode: mode)}")
+      reason = skip_reason(existing, up_to_date: up_to_date, mode: mode, target: context[:parser_result])
+      @out.puts("Review skipped: #{reason}")
       true
     end
 
     # In once mode the review is not repeated on new pushes, even when the MR
     # has changed. So besides the mode the message says whether the review is
-    # up to date: if it is not, the Retry button of the GitLab job updates it.
-    def skip_reason(existing, up_to_date:, mode:)
+    # up to date: if it is not, a CI retry updates it (see Platform.update_hint).
+    def skip_reason(existing, up_to_date:, mode:, target:)
       return 'existing review is up to date' unless mode == 'once'
 
+      hint = Platform.update_hint(target: target, env: @env)
       state = if up_to_date then 'the review is up to date'
-              elsif existing[:key].nil? then "review freshness is unknown: #{update_hint}"
-              else "review inputs changed: #{update_hint}"
+              elsif existing[:key].nil? then "review freshness is unknown: #{hint}"
+              else "review inputs changed: #{hint}"
               end
       "merge request already reviewed (review_mode=once), #{state}"
     end
 
-    def update_hint
-      ci_job_context ? 'retry the job to update' : 'use --force to review again'
-    end
-
-    def retried_ci_job?(gitlab_client)
-      project_id, job_id = ci_job_context
-      return false unless project_id
-
-      gitlab_client.retried_job?(project_id, job_id)
-    end
-
-    def ci_job_context
-      project_id, job_id = @env.values_at('CI_PROJECT_ID', 'CI_JOB_ID')
-      return if Aireview::Utils.blank?(project_id) || Aireview::Utils.blank?(job_id)
-
-      [project_id, job_id]
+    def retried_run?(context)
+      Platform.retried_run?(client: context[:client], target: context[:parser_result], env: @env)
     end
 
     def publish_review(review, context, publication)
@@ -266,7 +249,7 @@ module Aireview
     # is worse than publishing nothing, and a failed check cannot be read as
     # "all in place", so it is not swallowed.
     def merge_request_moved?(context)
-      current = context[:gitlab_client].fetch_merge_request(
+      current = context[:client].fetch_merge_request(
         context[:parser_result].project_id,
         context[:parser_result].iid
       )

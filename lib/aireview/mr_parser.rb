@@ -3,7 +3,7 @@ require 'uri'
 
 module Aireview
   class MrParser
-    Result = Struct.new(:url, :base_url, :project_path, :project_id, :iid, keyword_init: true)
+    Result = Struct.new(:platform, :url, :base_url, :project_path, :project_id, :iid, keyword_init: true)
 
     MR_PATH = %r{\A/(?<project>.+)/-/merge_requests/(?<iid>\d+)\z}
 
@@ -17,6 +17,7 @@ module Aireview
       project_path = match[:project]
 
       Result.new(
+        platform: :gitlab,
         url: url,
         base_url: "#{uri.scheme}://#{uri.host}#{":#{uri.port}" if uri.port && ![80, 443].include?(uri.port)}",
         project_path: project_path,
