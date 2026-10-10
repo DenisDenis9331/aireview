@@ -1,16 +1,17 @@
 # aireview
 
-`aireview` is a local CLI tool that reviews GitLab merge requests with the help
-of LLMs. It uses a two-pass review pipeline: the first pass finds candidate
+`aireview` is a local CLI tool that reviews GitLab merge requests and GitHub
+pull requests with the help of LLMs. It uses a two-pass review pipeline: the first pass finds candidate
 findings, the second one critiques them and drops the weak or invalid ones.
 
 The tool supports self-hosted GitLab and self-hosted Jira only. GitLab.com and
-Jira Cloud are not supported.
+Jira Cloud are not supported. Pull requests work on github.com and GitHub
+Enterprise Server.
 
 MVP flow:
 
-1. Takes a GitLab merge request URL.
-2. Fetches the MR metadata and changes from GitLab.
+1. Takes a GitLab merge request URL or a GitHub pull request URL.
+2. Fetches the MR metadata and changes from GitLab or GitHub.
 3. Filters out ignored paths and scrubs secrets from the diffs.
 4. Optionally enriches the prompt with context from a Jira issue.
 5. Runs the Generate pass through RubyLLM to get an MR summary and candidate
@@ -24,7 +25,7 @@ MVP flow:
 
 - Ruby 3.1.3 or newer (CI runs the tests on 3.1, 3.3, 3.4 and 4.0)
 - Bundler 2.3.26 for the repository checkout; `gem install` needs no specific Bundler
-- A GitLab personal access token
+- A GitLab personal access token, or a GitHub token for pull requests
 - An API key for a remote LLM provider; a local Ollama needs no key
 - Optionally, a Jira login and password
 
@@ -78,6 +79,14 @@ LLM_CRITIQUE_TEMPERATURE=0
 REVIEW_LANGUAGE=ru
 REVIEW_MODE=update
 ```
+
+For GitHub pull requests the GitLab variables are not needed; the token is
+`GITHUB_TOKEN` (a personal or fine-grained token with read access to the
+code and pull requests, plus write access to pull requests for `--post`).
+The API address comes from the pull request URL — `api.github.com` for
+github.com, `https://<host>/api/v3` for GitHub Enterprise — unless
+`GITHUB_API_URL` says otherwise. `GITHUB_REVIEW_AUTHOR` is needed for tokens
+that cannot read their own user, see "A single comment per merge request".
 
 The providers are `gemini`, `ollama`, `openai`, `anthropic` and
 `openrouter`, and any OpenAI-compatible server of your own (vLLM, llama.cpp,
@@ -735,6 +744,7 @@ unverifiable. Any other 422 is not retried.
 ```bash
 bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123
 bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --post
+bundle _2.3.26_ exec bin/aireview review https://github.com/owner/repo/pull/42 --post
 bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --no-jira
 bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --dry-run --verbose
 bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --generate-model gemini-3.7-flash --critique-model gemini-3.8-flash
@@ -838,6 +848,25 @@ title and the description: if any of those changed, the result is not published 
 a comment must not end up holding a review of a diff that is no longer current.
 The review text is printed to stdout before the publishing attempt, so it stays
 in the job log. The previous comment is kept until the end of the next run.
+
+On GitHub the same comment is a pull request conversation comment, and the
+author is compared by login. A personal or fine-grained token reads its login
+from `/user`. The Actions `GITHUB_TOKEN` and GitHub App installation tokens
+cannot: set `GITHUB_REVIEW_AUTHOR` to the login the comments are posted as —
+`github-actions[bot]` for `GITHUB_TOKEN`, `<app-slug>[bot]` for an App.
+Without it such a token stops the run with an error rather than guessing: a
+wrong author means the review is not found and a second one is posted. Every
+workflow that comments with `GITHUB_TOKEN` writes as `github-actions[bot]`,
+so a marked comment from another workflow of the repository would be taken
+for the review.
+
+A **Re-run** of the workflow counts as a retry in `once` mode
+(`GITHUB_RUN_ATTEMPT` above 1). The "moved while reviewing" check compares
+the merge base instead of the base branch tip: a push to the base branch
+that does not change the pull request diff does not stop publishing, while
+a merge of part of the pull request into the base branch does. When GitHub
+returns fewer files than the pull request changes (it lists at most 3000),
+the count of the missing ones is written under "Not reviewed".
 
 ## GitLab CI
 
@@ -952,6 +981,77 @@ pipeline, the image is not built, the previous version stays in the
 registry) → build and push → set the new tag in `stable`. The same check on
 a schedule (once a day) is the early signal that the provider retired a
 model — otherwise the first to learn about it is a live MR.
+
+## GitHub Actions
+
+A workflow for pull requests of the same repository:
+
+```yaml
+name: aireview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: aireview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # Fork PRs get no secrets and a read-only token: skip them. Dependabot
+    # PRs come from branches of this repo, pass the fork check, but get no
+    # Actions secrets either: skip them too.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]' &&
+      !github.event.pull_request.draft &&
+      !contains(github.event.pull_request.title, '[skip review]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1; for .aireview.yml
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
+        with:
+          ruby-version: '3.3'
+      - run: gem install aireview -v '~> 2.3'
+      - run: aireview review "$PR_URL" --post
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REVIEW_AUTHOR: github-actions[bot] # who GITHUB_TOKEN posts as
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          REVIEW_MODE: update # once: one published review per PR, "Re-run jobs" refreshes it
+```
+
+The only secret to add is `GEMINI_API_KEY`: without `.aireview.yml` the gem
+takes its bundled defaults (the Gemini pool).
+
+- `pull_request`, never `pull_request_target` with a checkout of the pull
+  request head: `.aireview.yml` from the pull request can set provider
+  addresses, so a fork could send the API key to a server of its own.
+- The URL goes through `env`, not through `${{ }}` inside `run:`, so that
+  nothing from the event is pasted into the shell script.
+- `edited` reviews again after a title or description edit; when the edit
+  does not reach the prompts, the key is the same and no LLM request is sent.
+- `timeout-minutes: 40` is `LLM_TIME_BUDGET` (30 minutes by default) plus
+  reading and publishing.
+
+`update` keeps the review current after every push that changes the diff.
+`once` is the cheaper option: one published review per pull request,
+refreshed with **Re-run jobs** when its inputs changed. Neither means exactly
+one LLM run: a run cancelled or failed before publishing leaves no review,
+so the next push runs the LLM again. `cancel-in-progress` drops a run
+overtaken by a push — it would usually not publish anyway — but requests
+already sent to the provider may still be billed. And a push between the
+"moved" check and the post can still leave a review of the previous diff
+until the next run replaces it.
 
 ## Docker
 

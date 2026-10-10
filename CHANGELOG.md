@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- GitHub pull requests: `aireview review https://github.com/owner/repo/pull/42`
+  reviews a pull request on github.com or GitHub Enterprise Server, and
+  `--post` keeps one updatable conversation comment, as on GitLab. The token
+  is `GITHUB_TOKEN`; `GITHUB_API_URL` overrides the API address,
+  `GITHUB_REVIEW_AUTHOR` names the comment author for tokens that cannot
+  read `/user` (the Actions `GITHUB_TOKEN`: `github-actions[bot]`). A
+  **Re-run** counts as a retry in `review_mode: once`; the "moved while
+  reviewing" check compares the merge base, so a push to the base branch
+  alone does not stop publishing. Files GitHub did not return (it lists at
+  most 3000) are counted under "Not reviewed". The README has a GitHub
+  Actions workflow. GitLab behaviour and review keys are unchanged.
 - In a ranked pool (`rank: not_below_generate`) Critique no longer falls
   back to the model that answered in Generate while a model its chain
   prefers is only quarantined: it waits for that model when the wait plus a
