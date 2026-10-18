@@ -48,7 +48,7 @@ jobs:
             release-notes.md
           if-no-files-found: error
       # The action has no version tags, only main; pinned to a commit
-      - uses: rubygems/configure-rubygems-credentials@8674aee7f9f9055a8b771794d6f1e66b5fad36a9
+      - uses: rubygems/configure-rubygems-credentials@f5a32efa94076b80b28556b2d3b04cb3707b6df1
       - run: gem push aireview-*.gem
 
   # Separate job so that a failure here can be re-run alone: the gem is
