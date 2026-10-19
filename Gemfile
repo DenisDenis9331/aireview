@@ -5,5 +5,5 @@ gemspec
 
 group :development, :test do
   gem 'rspec', '~> 3.13'
-  gem 'rubocop', '~> 1.75', require: false
+  gem 'rubocop', '~> 1.92', require: false
 end
