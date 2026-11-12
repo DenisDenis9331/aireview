@@ -866,7 +866,13 @@ the merge base instead of the base branch tip: a push to the base branch
 that does not change the pull request diff does not stop publishing, while
 a merge of part of the pull request into the base branch does. When GitHub
 returns fewer files than the pull request changes (it lists at most 3000),
-the count of the missing ones is written under "Not reviewed".
+the count of the missing ones is written under "Not reviewed". Comments
+exceeding GitHub's 65,536-character limit are automatically fitted by
+shortening the files list under "Not reviewed" (or the summary if
+oversized) while keeping findings and result intact. On GitHub's files API,
+pure file renames (`changes: 0` without a patch) count as having no text
+changes; because Git does not count lines for binary files, byte modifications
+in a renamed binary file also report zero changes.
 
 ## GitLab CI
 

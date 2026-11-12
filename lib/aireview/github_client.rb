@@ -21,6 +21,10 @@ module Aireview
     # incomplete comment list the publisher would not find its own review
     # and would post a second one.
     PAGE_LIMIT = 100
+    REDIRECT_LIMIT = 5
+    REDIRECT_STATUSES = [301, 302, 307, 308].freeze
+    # GitHub limits issue and PR comment bodies to 65,536 characters.
+    MAX_COMMENT_LENGTH = 65_536
     API_VERSION = '2022-11-28'
     GITHUB_COM_API = 'https://api.github.com'
 
@@ -39,6 +43,7 @@ module Aireview
       @logger = logger
       @token = token
       @review_author = review_author
+      @base_uri = URI.parse("#{api_url.chomp('/')}/")
       @connection = connection || build_connection(api_url)
     end
 
@@ -87,11 +92,11 @@ module Aireview
     end
 
     def post_merge_request_note(repo, number, body)
-      send_json(:post, "repos/#{repo}/issues/#{number}/comments", body: body)
+      send_json(:post, "repos/#{repo}/issues/#{number}/comments", body: fit_comment_body(body))
     end
 
     def update_merge_request_note(repo, _number, comment_id, body)
-      send_json(:patch, "repos/#{repo}/issues/comments/#{comment_id}", body: body)
+      send_json(:patch, "repos/#{repo}/issues/comments/#{comment_id}", body: fit_comment_body(body))
     end
 
     # The login is the author id the publisher matches comments by. A token
@@ -120,6 +125,9 @@ module Aireview
     # has no mode fields either. Only a rename without changes explains an
     # empty diff, everything else counts as unavailable — the report must not
     # claim that a binary was reviewed. An empty new file ends up there too.
+    # Note: Git does not track line counts for binary files, so a binary file
+    # renamed with byte modifications also reports changes == 0 without a patch;
+    # without a base blob comparison this is indistinguishable from a pure rename.
     def change(file)
       status = file['status']
       patch = file['patch'].to_s
@@ -143,7 +151,7 @@ module Aireview
       params = {per_page: PER_PAGE}
 
       PAGE_LIMIT.times do
-        response = request(:get, url, params)
+        response = request(:get, url, params: params)
         batch = parse_json(response)
         raise ApiError, "GitHub API returned an invalid #{what} list" unless batch.is_a?(Array)
 
@@ -182,23 +190,40 @@ module Aireview
     end
 
     def get_json(path, params = {})
-      parse_json(request(:get, path, params))
+      parse_json(request(:get, path, params: params))
     end
 
-    def request(method, path, params)
-      @connection.public_send(method, path, params, headers)
+    def request(method, path, params: nil, body: nil)
+      current_path = path
+      current_params = params
+      redirects = 0
+
+      loop do
+        response = execute_request(method, current_path, current_params, body)
+        return response unless REDIRECT_STATUSES.include?(response.status.to_i)
+
+        redirects += 1
+        raise ApiError, 'Too many redirects from GitHub API' if redirects > REDIRECT_LIMIT
+
+        current_path, current_params = follow_redirect(response, current_path, current_params)
+      end
     rescue Faraday::Error => e
       raise ApiError, "GitHub API request failed: #{e.message}"
     end
 
     def send_json(method, path, body)
-      response = @connection.public_send(method, path) do |request|
-        request.headers.update(headers)
-        request.body = JSON.generate(body)
+      parse_json(request(method, path, body: body))
+    end
+
+    def execute_request(method, path, params, body)
+      if body.nil?
+        @connection.public_send(method, path, params, headers)
+      else
+        @connection.public_send(method, path) do |request|
+          request.headers.update(headers)
+          request.body = JSON.generate(body)
+        end
       end
-      parse_json(response)
-    rescue Faraday::Error => e
-      raise ApiError, "GitHub API request failed: #{e.message}"
     end
 
     def parse_json(response)
@@ -220,6 +245,114 @@ module Aireview
         'Content-Type' => 'application/json',
         'X-GitHub-Api-Version' => API_VERSION
       }
+    end
+
+    # Follow same-origin redirects (e.g. repo rename or transfer) without
+    # leaking authorization tokens to external hosts.
+    def follow_redirect(response, current_path, current_params)
+      location = response.headers['location'].to_s
+      if Aireview::Utils.blank?(location)
+        raise ApiError, "GitHub API redirected with status #{response.status} without a Location header"
+      end
+
+      current_url = URI.join(@base_uri.to_s, current_path)
+      target = URI.join(current_url.to_s, location)
+      unless same_origin?(target, @base_uri)
+        raise ApiError, "Refusing redirect from #{@base_uri.host} to #{target.host}"
+      end
+
+      [target.to_s, target.query ? {} : current_params]
+    end
+
+    def same_origin?(target, base)
+      target.scheme == base.scheme && target.host == base.host && target.port == base.port
+    end
+
+    # When an enormous review overflows GitHub's 65,536-char limit, findings
+    # and summary stay intact; only the files list in the not-reviewed block
+    # (or the summary if oversized) is shortened with a note. Never drops
+    # findings or result: a corrupted review must not be saved to GitHub.
+    def fit_comment_body(body, limit = MAX_COMMENT_LENGTH)
+      return body if body.length <= limit
+
+      fitted = truncate_not_reviewed(body, limit)
+      return fitted if fitted && fitted.length <= limit
+
+      fitted = truncate_summary(fitted || body, limit)
+      return fitted if fitted && fitted.length <= limit
+
+      raise ApiError, "Review comment exceeds GitHub limit of #{limit} characters " \
+                      'and cannot be shortened without dropping findings'
+    end
+
+    def truncate_not_reviewed(body, limit)
+      result_index = body.rindex(/\n## (?:Result|Результат)\n\n/)
+      return nil unless result_index
+
+      match = body[result_index..].match(/(\n## (?:Not reviewed|Не вошло в ревью)\n\n)(.*)/m)
+      return nil unless match
+
+      prefix = body[0...(result_index + match.begin(0))] + match[1]
+      rest = match[2]
+      is_ru = body.include?('Не вошло в ревью')
+      items, footer = split_items_and_footer(rest)
+
+      kept, omitted = fit_items(items, prefix: prefix, footer: footer, is_ru: is_ru, limit: limit)
+      result_items = kept
+      result_items << omission_note(omitted, is_ru) if omitted.positive?
+
+      "#{prefix}#{result_items.join}#{footer}"
+    end
+
+    def truncate_summary(body, limit)
+      summary_pattern = /(\n## (?:Summary|Сводка)\n\n)(.*?)(\n\n## )/m
+      match = body.match(summary_pattern)
+      return nil unless match
+
+      prefix = body[0...match.begin(0)] + match[1]
+      summary = match[2]
+      suffix = match[3] + body[match.end(0)..]
+      is_ru = body.include?('## Сводка')
+      note = is_ru ? "\n[сводка усечена]" : "\n[summary truncated]"
+
+      room = limit - prefix.length - suffix.length - note.length
+      return nil if room <= 0
+
+      "#{prefix}#{summary[0, room]}#{note}#{suffix}"
+    end
+
+    def split_items_and_footer(rest)
+      items = []
+      trailer = []
+      in_items = true
+      rest.lines.each do |line|
+        if in_items && line.start_with?('- ')
+          items << line
+        else
+          in_items = false
+          trailer << line
+        end
+      end
+      [items, trailer.join]
+    end
+
+    def fit_items(items, prefix:, footer:, is_ru:, limit:)
+      kept = []
+      kept_length = 0
+      items.each_with_index do |line, index|
+        remaining = items.size - (index + 1)
+        omission = remaining.positive? ? omission_note(remaining, is_ru) : ''
+        candidate_size = prefix.length + kept_length + line.length + omission.length + footer.length
+        break if candidate_size > limit
+
+        kept << line
+        kept_length += line.length
+      end
+      [kept, items.size - kept.size]
+    end
+
+    def omission_note(count, is_ru)
+      is_ru ? "- ... и ещё #{count} файлов не показано\n" : "- ... and #{count} more files not shown\n"
     end
   end
 end
