@@ -39,6 +39,7 @@ module Aireview
 
     def prepare(merge_request:, changes:, jira_issue: nil, critique: true)
       coverage = ContextBudget::Coverage.empty
+      coverage.files_not_returned = merge_request['files_not_returned'].to_i
       budget = context_budget(critique: critique)
       sections = merge_request_sections(merge_request, coverage: coverage)
       sections << jira_section(jira_issue, coverage: coverage) if jira_issue

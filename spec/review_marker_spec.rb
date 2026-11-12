@@ -79,6 +79,18 @@ RSpec.describe Aireview::ReviewMarker do
       expect(described_class.key(prompts: golden_prompts.merge(critique_prompt: nil), config: stage)).to eq('783db3b9d42ab693')
     end
 
+    it 'changes with the count of files the platform did not return, and only when it is nonzero' do
+      coverage = lambda do |missing|
+        Aireview::ContextBudget::Coverage.empty.tap { |value| value.files_not_returned = missing }
+      end
+      complete = described_class.key(prompts: prompts, config: config)
+
+      expect(described_class.key(prompts: prompts(coverage: coverage.call(0)), config: config)).to eq(complete)
+      expect(described_class.key(prompts: prompts(coverage: coverage.call(412)), config: config)).not_to eq(complete)
+      expect(described_class.key(prompts: prompts(coverage: coverage.call(415)), config: config))
+        .not_to eq(described_class.key(prompts: prompts(coverage: coverage.call(412)), config: config))
+    end
+
     it 'changes when the critique pass is disabled' do
       expect(described_class.key(prompts: prompts(critique_prompt: nil), config: config))
         .not_to eq(described_class.key(prompts: prompts, config: config))

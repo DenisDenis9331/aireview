@@ -128,6 +128,18 @@ module Aireview
       @data['gitlab_token']
     end
 
+    def github_token
+      @data['github_token']
+    end
+
+    def github_api_url
+      @data['github_api_url']
+    end
+
+    def github_review_author
+      @data['github_review_author']
+    end
+
     def jira_url
       @data['jira_url']
     end
@@ -259,6 +271,12 @@ module Aireview
       return gitlab_token if Aireview::Utils.present?(gitlab_token)
 
       raise ConfigError, 'GITLAB_TOKEN is required'
+    end
+
+    def require_github_token!
+      return github_token if Aireview::Utils.present?(github_token)
+
+      raise ConfigError, 'GITHUB_TOKEN is required'
     end
 
     private

@@ -48,7 +48,7 @@ RSpec.describe Aireview::Publisher do
         ]
       )
 
-      result = described_class.new(gitlab_client: client, logger: logger)
+      result = described_class.new(client: client, logger: logger)
                               .existing_review(project_id: 'group/project', iid: 5)
 
       expect(result).to eq(id: 2, key: 'deadbeef')
@@ -63,7 +63,7 @@ RSpec.describe Aireview::Publisher do
                 note(id: 1, body: "#{described_class::PREFIX}\n\noldest review")]
       )
 
-      result = described_class.new(gitlab_client: client, logger: logger)
+      result = described_class.new(client: client, logger: logger)
                               .existing_review(project_id: 'group/project', iid: 5)
 
       expect(result).to eq(id: 3, key: nil)
@@ -76,7 +76,7 @@ RSpec.describe Aireview::Publisher do
         notes.reverse! if legacy_first
         client = FakeGitlabClient.new(notes: notes)
 
-        result = described_class.new(gitlab_client: client, logger: logger)
+        result = described_class.new(client: client, logger: logger)
                                 .existing_review(project_id: 'group/project', iid: 5)
 
         expect(result).to eq(id: 2, key: 'deadbeef')
@@ -92,7 +92,7 @@ RSpec.describe Aireview::Publisher do
                 note(id: 4, body: "A quote: #{body}")]
       )
 
-      result = described_class.new(gitlab_client: client, logger: logger)
+      result = described_class.new(client: client, logger: logger)
                               .existing_review(project_id: 'group/project', iid: 5)
 
       expect(result).to be_nil
@@ -103,7 +103,7 @@ RSpec.describe Aireview::Publisher do
         notes: [note(id: 3, body: Aireview::ReviewMarker.build('deadbeef'), author_id: 99)]
       )
 
-      result = described_class.new(gitlab_client: client, logger: logger)
+      result = described_class.new(client: client, logger: logger)
                               .existing_review(project_id: 'group/project', iid: 5)
 
       expect(result).to be_nil
@@ -114,7 +114,7 @@ RSpec.describe Aireview::Publisher do
         notes: [note(id: 4, body: Aireview::ReviewMarker.build('deadbeef'), system: true)]
       )
 
-      result = described_class.new(gitlab_client: client, logger: logger)
+      result = described_class.new(client: client, logger: logger)
                               .existing_review(project_id: 'group/project', iid: 5)
 
       expect(result).to be_nil
@@ -127,15 +127,41 @@ RSpec.describe Aireview::Publisher do
       )
 
       expect do
-        described_class.new(gitlab_client: client, logger: logger)
+        described_class.new(client: client, logger: logger)
                        .existing_review(project_id: 'group/project', iid: 5)
       end.to raise_error(Aireview::ApiError)
+    end
+
+    # GitHub comments carry the login as the author id. With
+    # GITHUB_REVIEW_AUTHOR naming a workflow's own App, a marked comment of
+    # github-actions[bot] is someone else's.
+    it 'matches GitHub comments by the login of the review author' do
+      marker = Aireview::ReviewMarker.build('deadbeef')
+      client = FakeGitlabClient.new(
+        user: {'id' => 'my-app[bot]'},
+        notes: [note(id: 30, body: "#{marker}\nother workflow", author_id: 'github-actions[bot]'),
+                note(id: 20, body: "#{marker}\nour review", author_id: 'my-app[bot]')]
+      )
+
+      result = described_class.new(client: client, platform_name: 'GitHub', logger: logger)
+                              .existing_review(project_id: 'owner/repo', iid: 7)
+
+      expect(result).to eq(id: 20, key: 'deadbeef')
+    end
+
+    it 'names the platform when it returns no user' do
+      client = FakeGitlabClient.new(user: {'id' => nil})
+
+      expect do
+        described_class.new(client: client, platform_name: 'GitHub', logger: logger)
+                       .existing_review(project_id: 'owner/repo', iid: 7)
+      end.to raise_error(Aireview::ApiError, 'GitHub did not return the current user id')
     end
 
     it 'returns nil when there are no notes at all' do
       client = FakeGitlabClient.new
 
-      result = described_class.new(gitlab_client: client, logger: logger)
+      result = described_class.new(client: client, logger: logger)
                               .existing_review(project_id: 'group/project', iid: 5)
 
       expect(result).to be_nil
@@ -146,7 +172,7 @@ RSpec.describe Aireview::Publisher do
     it 'creates a note with the marker when no review exists yet' do
       client = FakeGitlabClient.new
 
-      described_class.new(gitlab_client: client, logger: logger).publish(
+      described_class.new(client: client, logger: logger).publish(
         project_id: 'group/project', iid: 5, review_body: 'review text', key: 'deadbeef'
       )
 
@@ -159,7 +185,7 @@ RSpec.describe Aireview::Publisher do
     it 'updates the existing note instead of adding a second one' do
       client = FakeGitlabClient.new
 
-      described_class.new(gitlab_client: client, logger: logger).publish(
+      described_class.new(client: client, logger: logger).publish(
         project_id: 'group/project', iid: 5, review_body: 'fresh review',
         key: 'cafebabe', existing: {id: 2, key: 'deadbeef'}
       )
@@ -172,7 +198,7 @@ RSpec.describe Aireview::Publisher do
     it 'keeps working without a key' do
       client = FakeGitlabClient.new
 
-      described_class.new(gitlab_client: client, logger: logger).publish(
+      described_class.new(client: client, logger: logger).publish(
         project_id: 'group/project', iid: 5, review_body: 'review text'
       )
 

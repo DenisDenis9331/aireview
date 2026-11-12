@@ -12,16 +12,20 @@ module Aireview
     NOT_SHOWN_LIST_LIMIT = 20
     TRAILER_RESERVE_CHARS = 400
 
+    # files_not_returned is a count, not a list: the platform returned fewer
+    # files than the merge request changes and did not say which ones.
     Coverage = Struct.new(
       :truncated_sections, :files_not_shown, :files_partial, :files_unavailable, :hunks_skipped,
+      :files_not_returned,
       keyword_init: true
     ) do
       def self.empty
-        new(truncated_sections: [], files_not_shown: [], files_partial: [], files_unavailable: [], hunks_skipped: [])
+        new(truncated_sections: [], files_not_shown: [], files_partial: [], files_unavailable: [], hunks_skipped: [],
+            files_not_returned: 0)
       end
 
       def complete?
-        to_h.values.all?(&:empty?)
+        to_h.except(:files_not_returned).values.all?(&:empty?) && files_not_returned.zero?
       end
     end
 

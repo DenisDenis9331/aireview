@@ -56,6 +56,32 @@ RSpec.describe Aireview::Config do
       end
     end
 
+    it 'reads the GitHub token, API URL and review author from the environment' do
+      Dir.mktmpdir do |dir|
+        config = described_class.load(
+          cwd: dir,
+          env: {
+            'GITHUB_TOKEN' => 'ghp-123',
+            'GITHUB_API_URL' => 'https://ghe.example.com/api/v3',
+            'GITHUB_REVIEW_AUTHOR' => 'github-actions[bot]'
+          },
+          logger: Logger.new(nil)
+        )
+
+        expect(config.require_github_token!).to eq('ghp-123')
+        expect(config.github_api_url).to eq('https://ghe.example.com/api/v3')
+        expect(config.github_review_author).to eq('github-actions[bot]')
+      end
+    end
+
+    it 'requires GITHUB_TOKEN only when asked for it' do
+      Dir.mktmpdir do |dir|
+        config = described_class.load(cwd: dir, env: {}, logger: Logger.new(nil))
+
+        expect { config.require_github_token! }.to raise_error(Aireview::ConfigError, 'GITHUB_TOKEN is required')
+      end
+    end
+
     it 'uses 60 seconds as the default LLM timeout' do
       Dir.mktmpdir do |dir|
         # A model of its own keeps the bundled defaults (timeout 180) out.
