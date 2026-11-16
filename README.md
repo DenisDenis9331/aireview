@@ -134,7 +134,7 @@ What `config/defaults.yml` sets today (the file is the source of truth):
 | Setting | Default |
 |---|---|
 | Model pool, strongest first | `gemini-4-hydrogen`, `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.5-flash-lite` (all `gemini`) |
-| Generate | starts at `gemini-3.7-flash`, temperature 0.1 |
+| Generate | starts at `gemini-3.8-flash`, temperature 0.1 |
 | Critique | first live model not below the one Generate answered with (`rank: not_below_generate`, `allow_weaker: false`), temperature 0 |
 | Request timeout | 180 s per request, up to three attempts per model per stage |
 | Time budget | 1800 s shared across the LLM stages, including retry waits |
