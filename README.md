@@ -124,7 +124,7 @@ model (`llm.models` or a stage `model`). So
 local setup with models of its own is not affected. Point
 `AIREVIEW_DEFAULTS` at any file to get the image layer elsewhere. The
 defaults define a shared pool of six Gemini models (see "Shared model
-pool"): Generate starts from a mid-range model and goes round the pool,
+pool"): Generate starts from the second model (`gemini-3.8-flash`) and goes round the pool,
 Critique takes the strongest live model not below the one Generate answered
 with; every model of the pool is confirmed by `aireview models check` on
 release.
@@ -185,8 +185,8 @@ every model, the layer it came from:
 ```
 === LLM SETTINGS ===
 Config: image defaults /app/config/defaults.yml, .aireview.yml /app/.aireview.yml
-Generate: gemini-3.7-flash temperature=0.1 (model from image defaults, provider from image defaults)
-  fallbacks: gemini/gemini-3.6-flash -> ... (fallbacks from image defaults)
+Generate: gemini-3.8-flash temperature=0.1 (model from image defaults, provider from image defaults)
+  fallbacks: gemini/gemini-3.7-flash -> ... (fallbacks from image defaults)
 Critique: qwen2.5-coder:7b temperature=0 (model from .aireview.yml, provider from .aireview.yml)
 Time budget: 1800s, overloaded quarantine: 120s
 ```
