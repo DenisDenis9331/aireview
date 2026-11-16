@@ -123,7 +123,7 @@ model (`llm.models` or a stage `model`). So
 `gem install aireview` plus an API key is enough to run a review, and a
 local setup with models of its own is not affected. Point
 `AIREVIEW_DEFAULTS` at any file to get the image layer elsewhere. The
-defaults define a shared pool of five Gemini models (see "Shared model
+defaults define a shared pool of six Gemini models (see "Shared model
 pool"): Generate starts from a mid-range model and goes round the pool,
 Critique takes the strongest live model not below the one Generate answered
 with; every model of the pool is confirmed by `aireview models check` on
@@ -133,7 +133,7 @@ What `config/defaults.yml` sets today (the file is the source of truth):
 
 | Setting | Default |
 |---|---|
-| Model pool, strongest first | `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.5-flash-lite` (all `gemini`) |
+| Model pool, strongest first | `gemini-4-hydrogen`, `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.5-flash-lite` (all `gemini`) |
 | Generate | starts at `gemini-3.7-flash`, temperature 0.1 |
 | Critique | first live model not below the one Generate answered with (`rank: not_below_generate`, `allow_weaker: false`), temperature 0 |
 | Request timeout | 180 s per request, up to three attempts per model per stage |

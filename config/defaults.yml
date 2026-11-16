@@ -29,6 +29,8 @@ llm:
   overloaded_quarantine: 120
   models:
     - provider: gemini
+      model: gemini-4-hydrogen
+    - provider: gemini
       model: gemini-3.8-flash
     - provider: gemini
       model: gemini-3.7-flash

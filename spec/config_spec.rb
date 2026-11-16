@@ -949,14 +949,14 @@ RSpec.describe Aireview::Config do
           expect(config.routing).to be_a(Aireview::ModelPool)
           expect(config.routing.pool_stage?('generate') && config.routing.pool_stage?('critique')).to be(true)
           pool = config.routing.pool
-          expect(pool.size).to eq(5)
-          expect(pool.map(&:model).uniq.size).to eq(5)
+          expect(pool.size).to eq(6)
+          expect(pool.map(&:model).uniq.size).to eq(6)
           expect(pool.map(&:provider).uniq).to eq(['gemini'])
           expect(pool.map(&:model)).to all(match(/\A[a-z0-9.-]+\z/))
           expect(pool.map(&:model)).not_to include(a_string_matching(/preview|exp/))
           # Generate does not start from the strongest model; Critique does.
           expect(config.stage_chain(:generate).first.model).to eq('gemini-3.7-flash')
-          expect(config.stage_chain(:critique).first.model).to eq('gemini-3.8-flash')
+          expect(config.stage_chain(:critique).first.model).to eq('gemini-4-hydrogen')
           expect(config.routing.rule).to eq('not_below_generate')
           expect(config.generate_temperature).to eq(0.1)
           expect(config.critique_temperature).to eq(0)
