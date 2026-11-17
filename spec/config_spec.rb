@@ -949,8 +949,8 @@ RSpec.describe Aireview::Config do
           expect(config.routing).to be_a(Aireview::ModelPool)
           expect(config.routing.pool_stage?('generate') && config.routing.pool_stage?('critique')).to be(true)
           pool = config.routing.pool
-          expect(pool.size).to eq(6)
-          expect(pool.map(&:model).uniq.size).to eq(6)
+          expect(pool.size).to eq(4)
+          expect(pool.map(&:model).uniq.size).to eq(4)
           expect(pool.map(&:provider).uniq).to eq(['gemini'])
           expect(pool.map(&:model)).to all(match(/\A[a-z0-9.-]+\z/))
           expect(pool.map(&:model)).not_to include(a_string_matching(/preview|exp/))
