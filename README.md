@@ -69,12 +69,12 @@ LLM_TIMEOUT=120
 LLM_TIME_BUDGET=1800
 LLM_HTTP_PROXY=http://127.0.0.1:8888
 LLM_GENERATE_PROVIDER=gemini
-LLM_GENERATE_MODEL=gemini-3.7-flash
+LLM_GENERATE_MODEL=gemini-3.6-flash
 LLM_GENERATE_FALLBACK_MODEL=gemini-3.8-flash
 LLM_GENERATE_TEMPERATURE=0.3
 LLM_CRITIQUE_PROVIDER=gemini
 LLM_CRITIQUE_MODEL=gemini-3.8-flash
-LLM_CRITIQUE_FALLBACK_MODEL=gemini-3.7-flash
+LLM_CRITIQUE_FALLBACK_MODEL=gemini-3.6-flash
 LLM_CRITIQUE_TEMPERATURE=0
 REVIEW_LANGUAGE=ru
 REVIEW_MODE=update
@@ -402,7 +402,7 @@ llm:
   max_prompt_chars: 400000
   generate:
     provider: gemini
-    model: gemini-3.7-flash
+    model: gemini-3.6-flash
     temperature: 0.3
     fallbacks:
       - gemini-3.8-flash
@@ -490,20 +490,20 @@ from model names:
 llm:
   provider: gemini
   models:                          # order = priority for Critique
+    - gemini-4-hydrogen
     - gemini-3.8-flash
-    - gemini-3.7-flash
     - gemini-3.6-flash
     - provider: ollama
       model: qwen2.5-coder:7b
       max_prompt_chars: 20000
   generate:
-    start: gemini-3.7-flash        # Generate starts here, then downwards and round
+    start: gemini-3.8-flash        # Generate starts here, then downwards and round
   critique:
     rank: not_below_generate       # or any — the chains are independent
     allow_weaker: false            # true — go below when nothing above is alive
 ```
 
-Environment equivalents: `LLM_MODELS=gemini/gemini-3.8-flash,gemini/gemini-3.7-flash,…`,
+Environment equivalents: `LLM_MODELS=gemini/gemini-4-hydrogen,gemini/gemini-3.8-flash,…`,
 `LLM_GENERATE_START`, `LLM_CRITIQUE_START`, `LLM_CRITIQUE_RANK`,
 `LLM_CRITIQUE_ALLOW_WEAKER`. The rules:
 
@@ -747,8 +747,8 @@ bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project
 bundle _2.3.26_ exec bin/aireview review https://github.com/owner/repo/pull/42 --post
 bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --no-jira
 bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --dry-run --verbose
-bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --generate-model gemini-3.7-flash --critique-model gemini-3.8-flash
-bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --generate-model gemini-3.7-flash --generate-temperature 0.3 --critique-model gemini-3.8-flash --critique-temperature 0
+bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --generate-model gemini-3.6-flash --critique-model gemini-3.8-flash
+bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --generate-model gemini-3.6-flash --generate-temperature 0.3 --critique-model gemini-3.8-flash --critique-temperature 0
 bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --no-critique
 ```
 
@@ -782,8 +782,8 @@ per-minute limit gets one retry after the provider's hint.
 
 ```
 Checking 5 model(s) with the generate and critique schemas
-gemini/gemini-3.7-flash          generate ok (4.6s)
-gemini/gemini-3.7-flash          critique ok (6.9s)
+gemini/gemini-3.8-flash          generate ok (4.6s)
+gemini/gemini-3.8-flash          critique ok (6.9s)
 gemini/gemini-3.6-flash          generate unverified: This model is currently experiencing high demand. …
 gemini/gemini-9.9-nope           generate missing: models/gemini-9.9-nope is not found for API version v1beta, …
 ollama/qwen2.5-coder:7b          generate skipped: Connection refused
@@ -896,7 +896,7 @@ aireview:
     MR_URL: "$CI_MERGE_REQUEST_PROJECT_URL/-/merge_requests/$CI_MERGE_REQUEST_IID"
     REVIEW_LANGUAGE: "ru"
     LLM_PROVIDER: "gemini"
-    LLM_GENERATE_MODEL: "gemini-3.7-flash"
+    LLM_GENERATE_MODEL: "gemini-3.6-flash"
     LLM_CRITIQUE_MODEL: "gemini-3.8-flash"
     LLM_TIMEOUT: "60"
     LLM_HTTP_PROXY: "http://127.0.0.1:8888"

@@ -212,7 +212,7 @@ module Aireview
       value.split(',').map(&:strip).reject(&:empty?).map { |item| ModelCandidate.parse_item(item) }
     end
 
-    # LLM_MODELS=gemini/gemini-3.8-flash,gemini/gemini-3.7-flash;
+    # LLM_MODELS=gemini/gemini-4-hydrogen,gemini/gemini-3.8-flash;
     # LLM_GENERATE_START / LLM_CRITIQUE_START — a model from the pool;
     # LLM_CRITIQUE_RANK, LLM_CRITIQUE_ALLOW_WEAKER=true|false.
     def pool_env_config(env)
