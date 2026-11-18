@@ -32,6 +32,7 @@ jobs:
         with:
           ruby-version: '3.3'
           bundler-cache: true
+      - run: sleep 60
       - run: bundle exec bin/aireview review "$PR_URL" --post
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}

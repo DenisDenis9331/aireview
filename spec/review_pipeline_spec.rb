@@ -35,7 +35,7 @@ RSpec.describe Aireview::ReviewPipeline do
   end
 
   let(:reviewer) do
-    instance_double('Aireview::Reviewer', fallback_models: {}, answered_model: nil, exclude_answered_model: nil,
+    instance_double('Aireview::Reviewer', models: {}, fallback_models: {}, answered_model: nil, exclude_answered_model: nil,
                                           finish_reason: nil, critique_weaker?: false)
   end
   let(:logger) { Logger.new(nil) }

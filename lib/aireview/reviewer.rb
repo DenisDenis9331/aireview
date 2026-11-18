@@ -33,6 +33,11 @@ module Aireview
       call_llm(prompt, pinned: pinned)
     end
 
+    # Stages answered by any model, for the report line.
+    def models
+      @router.models
+    end
+
     # Stages answered by a fallback model, for the report line.
     def fallback_models
       @router.fallback_models

@@ -46,6 +46,7 @@ module Aireview
         hunks_of: 'hunks shown',
         diff_unavailable: 'diff not available',
         section_list: 'Truncated sections',
+        models_used: 'Models',
         fallback_used: 'Fallback model used',
         critique_weaker: 'Critique ran on a model weaker than Generate: the findings were checked less strictly.',
         jev: 'The findings were checked by Jev, a fast classifier, without refining their wording.',
@@ -78,6 +79,7 @@ module Aireview
         hunks_of: 'хунков показано',
         diff_unavailable: 'дифф недоступен',
         section_list: 'Усечённые секции',
+        models_used: 'Модели',
         fallback_used: 'Использована резервная модель',
         critique_weaker: 'Критика выполнена моделью слабее generate: замечания проверены менее строго.',
         jev: 'Замечания проверены быстрым классификатором Jev, без уточнения формулировок.',
@@ -98,7 +100,8 @@ module Aireview
     # checked".
     # jev_note — how Jev took part in the critique (see JevStage::Outcome).
     # The facts about the run are named one by one on purpose.
-    def render(accepted, summary:, coverage: nil, fallback_models: {}, critique_weaker: false, jev_note: nil) # rubocop:disable Metrics/ParameterLists
+    def render(accepted, summary:, coverage: nil, models: {}, fallback_models: {}, # rubocop:disable Metrics/ParameterLists
+               critique_weaker: false, jev_note: nil)
       mismatches, important = select_findings(Array(accepted))
       result = mismatches.empty? && important.empty? ? 'ok' : 'needs attention'
 
@@ -118,7 +121,7 @@ module Aireview
         ## #{label(:result)}
 
         #{result}#{partial_note(coverage)}
-        #{coverage_block(coverage)}#{fallback_note(fallback_models)}#{weaker_note(critique_weaker)}#{jev_note(jev_note)}
+        #{coverage_block(coverage)}#{models_note(models)}#{fallback_note(fallback_models)}#{weaker_note(critique_weaker)}#{jev_note(jev_note)}
         #{label(:disclaimer)}
       MARKDOWN
     end
@@ -216,6 +219,13 @@ module Aireview
     # wording is the first pass's own.
     def jev_note(note)
       note ? "\n#{label(note)}\n" : ''
+    end
+
+    def models_note(models)
+      return '' if models.nil? || models.empty?
+
+      used = models.map { |stage, model| "#{stage} — #{model}" }.join(', ')
+      "\n#{label(:models_used)}: #{used}.\n"
     end
 
     def fallback_note(fallback_models)

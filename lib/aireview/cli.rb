@@ -4,6 +4,8 @@ require_relative 'model_checker'
 
 module Aireview
   class CLI # rubocop:disable Metrics/ClassLength
+    DIFF_FIELDS = %w[sha target_branch diff_refs].freeze
+
     def self.start(argv, out: $stdout, err: $stderr, env: ENV)
       new(argv, out: out, err: err, env: env).start
     end
@@ -76,6 +78,7 @@ module Aireview
       parser_result = MrParser.parse(mr_url)
       config = load_review_config(options)
       context = load_review_context(parser_result, config, options)
+      return 0 unless context
 
       execute_review(config, context, options)
     end
@@ -110,7 +113,14 @@ module Aireview
 
     def load_review_context(parser_result, config, options)
       client = Platform.client(config: config, target: parser_result, logger: @logger)
-      merge_request, changes = fetch_merge_request_data(client, parser_result)
+      @logger.info("Loading #{Platform.label(parser_result)}")
+      merge_request = client.fetch_merge_request(parser_result.project_id, parser_result.iid)
+      if options[:post] && skip_review_title?(merge_request['title'])
+        @out.puts("Review skipped: #{Platform.noun(parser_result)} title contains [skip review]")
+        return nil
+      end
+
+      changes = client.fetch_merge_request_changes(parser_result.project_id, parser_result.iid)
       merge_request = note_files_not_returned(merge_request, changes)
 
       {
@@ -120,13 +130,6 @@ module Aireview
         changes: prepare_changes(changes, config),
         jira_issue: maybe_load_jira_issue(config, merge_request, options)
       }
-    end
-
-    def fetch_merge_request_data(client, parser_result)
-      @logger.info("Loading #{Platform.label(parser_result)}")
-      merge_request = client.fetch_merge_request(parser_result.project_id, parser_result.iid)
-      changes = client.fetch_merge_request_changes(parser_result.project_id, parser_result.iid)
-      [merge_request, changes]
     end
 
     # A platform may return fewer files than the merge request changes
@@ -184,7 +187,7 @@ module Aireview
       # least stays in the job log.
       @out.puts(review)
 
-      publish_review(review, context, publication) if publication
+      publish_review(review, context, publication, language: config.review_language) if publication
 
       0
     end
@@ -246,13 +249,15 @@ module Aireview
       Platform.retried_run?(client: context[:client], target: context[:parser_result], env: @env)
     end
 
-    def publish_review(review, context, publication)
-      return if merge_request_moved?(context)
+    def publish_review(review, context, publication, language:)
+      status, changed = merge_request_status(context)
+      return if status == :skip
 
+      body = changed.any? ? "#{review}#{edited_note(language)}" : review
       publication[:publisher].publish(
         project_id: context[:parser_result].project_id,
         iid: context[:parser_result].iid,
-        review_body: review,
+        review_body: body,
         key: publication[:key],
         existing: publication[:existing]
       )
@@ -261,20 +266,46 @@ module Aireview
     # While the LLM was working the MR may have moved on: a new commit, a
     # rebase or a target branch change. Publishing a review of a stale diff
     # is worse than publishing nothing, and a failed check cannot be read as
-    # "all in place", so it is not swallowed.
-    def merge_request_moved?(context)
+    # "all in place", so it is not swallowed. Edits to title or description
+    # alone do not invalidate the diff, so the formed report is still posted
+    # with a note, unless [skip review] was added to the title.
+    def merge_request_status(context)
       current = context[:client].fetch_merge_request(
         context[:parser_result].project_id,
         context[:parser_result].iid
       )
+      noun = Platform.noun(context[:parser_result]).capitalize
+      if skip_review_title?(current['title'])
+        @logger.warn("#{noun} title contains [skip review]; skipping publication")
+        return [:skip, []]
+      end
+
       before = ReviewMarker.state(context[:merge_request])
       after = ReviewMarker.state(current)
       changed = after.keys.reject { |field| after[field] == before[field] }
-      return false if changed.empty?
+      return [:ok, []] if changed.empty?
 
-      noun = Platform.noun(context[:parser_result]).capitalize
+      unless changed.intersect?(DIFF_FIELDS)
+        @logger.warn("#{noun} edited while review was running (#{changed.join(', ')}); publishing anyway")
+        return [:ok, changed]
+      end
+
       @logger.warn("#{noun} changed while review was running (#{changed.join(', ')}); skipping publication")
-      true
+      [:skip, changed]
+    end
+
+    def skip_review_title?(title)
+      title.to_s.match?(/\[skip review\]/i)
+    end
+
+    def edited_note(language)
+      if language == 'ru'
+        "\n\nПримечание: заголовок или описание были изменены во время выполнения ревью; " \
+          'отчёт сформирован по предыдущей версии.'
+      else
+        "\n\nNote: the title or description was edited while the review was running; " \
+          'this report reflects the previous version.'
+      end
     end
 
     def maybe_load_jira_issue(config, merge_request, options)

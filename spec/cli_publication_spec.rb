@@ -141,7 +141,7 @@ RSpec.describe 'aireview review --post' do
     expect(err.string).to include('Merge request changed while review was running (sha); skipping publication')
   end
 
-  it 'skips publication when the requirements in the description change while the review runs' do
+  it 'still publishes with a note when only the description changes while the review runs' do
     client = RecordingGitlabClient.new(
       merge_request: merge_request,
       changes: changes,
@@ -149,8 +149,9 @@ RSpec.describe 'aireview review --post' do
     )
 
     expect(run_cli(client)).to eq(0)
-    expect(client.created).to be_empty
-    expect(err.string).to include('while review was running (description); skipping publication')
+    expect(client.created.size).to eq(1)
+    expect(client.created.first).to include('the title or description was edited while the review was running')
+    expect(err.string).to include('while review was running (description); publishing anyway')
   end
 
   it 'lists every changed field when several change while the review runs' do
@@ -169,7 +170,7 @@ RSpec.describe 'aireview review --post' do
     expect(err.string).to include('while review was running (sha, diff_refs, description); skipping publication')
   end
 
-  it 'skips publication when the title changes while the review runs' do
+  it 'still publishes with a note when only the title changes while the review runs' do
     client = RecordingGitlabClient.new(
       merge_request: merge_request,
       changes: changes,
@@ -177,7 +178,34 @@ RSpec.describe 'aireview review --post' do
     )
 
     expect(run_cli(client)).to eq(0)
+    expect(client.created.size).to eq(1)
+    expect(client.created.first).to include('the title or description was edited while the review was running')
+    expect(err.string).to include('while review was running (title); publishing anyway')
+  end
+
+  it 'skips diff loading, LLM and publication when the fresh title contains [skip review]' do
+    client = RecordingGitlabClient.new(
+      merge_request: merge_request.merge('title' => 'WIP [SKIP REVIEW]'),
+      changes: []
+    )
+    expect(client).not_to receive(:fetch_merge_request_changes)
+    expect(pipeline).not_to receive(:run)
+
+    expect(run_cli(client)).to eq(0)
     expect(client.created).to be_empty
+    expect(out.string).to include('Review skipped: merge request title contains [skip review]')
+  end
+
+  it 'skips publication when [skip review] is added to the title while the review runs' do
+    client = RecordingGitlabClient.new(
+      merge_request: merge_request,
+      changes: changes,
+      moved_to: merge_request.merge('title' => 'Add timeouts [SKIP REVIEW]')
+    )
+
+    expect(run_cli(client)).to eq(0)
+    expect(client.created).to be_empty
+    expect(err.string).to include('title contains [skip review]; skipping publication')
   end
 
   it 'skips the LLM entirely when the existing review matches the current key' do
@@ -358,7 +386,7 @@ RSpec.describe 'aireview review --post' do
     end
 
     context 'when the MR changes again during the retry' do
-      let(:moved_to) { merge_request.merge('description' => 'New requirements') }
+      let(:moved_to) { merge_request.merge('sha' => 'newsha') }
 
       it 'keeps the previous review instead of publishing stale output' do
         expect(client).to receive(:retried_job?).and_return(true)

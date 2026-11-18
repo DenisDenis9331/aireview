@@ -192,6 +192,26 @@ RSpec.describe Aireview::LlmRouter do
       expect(router.fallback_models).to eq('critique' => 'gemini/gemini-flash')
     end
 
+    it 'omits api_base from models and fallback_models' do
+      pool = Aireview::ModelPool.new(
+        items: [
+          {'provider' => 'openai', 'model' => 'primary', 'api_base' => 'http://user:secret@llm.internal/v1'},
+          {'provider' => 'openai', 'model' => 'reserve', 'api_base' => 'http://user:secret@llm.internal/v1'}
+        ],
+        provider: 'openai',
+        limits: {'generate' => 400_000, 'critique' => 400_000},
+        starts: {'generate' => 'primary'}
+      )
+      custom_router = described_class.new(config: config, routing: pool, logger: Logger.new(nil),
+                                          clock: -> { now[:time] }, sleeper: ->(_) {})
+      custom_router.call(stage: 'generate', request_chars: 1000) do |route|
+        route.candidate.model == 'primary' ? raise(missing_model_error('primary')) : 'ok'
+      end
+
+      expect(custom_router.models).to eq('generate' => 'openai/reserve')
+      expect(custom_router.fallback_models).to eq('generate' => 'openai/reserve')
+    end
+
     # Generate moved from the overloaded flash to lite; in Critique pro is
     # overloaded too while flash is still quarantined. Before, lite itself
     # did the critique: the same model as Generate.
