@@ -34,7 +34,7 @@ variables:
 aireview:
   stage: .post
   rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TITLE =~ /\[skip review\]/
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TITLE =~ /\[skip review\]/i
       when: never
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       when: always
@@ -46,6 +46,8 @@ aireview:
   interruptible: true
   resource_group: "aireview-$CI_MERGE_REQUEST_IID"
   script:
+    # Give the author a minute to finish editing the MR title or description.
+    - sleep 60
     - docker pull "${AIREVIEW_IMAGE}:${AIREVIEW_IMAGE_TAG}"
     # Mount the file only when it exists: docker run -v with a missing path
     # would create a directory of that name on the host.

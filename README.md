@@ -843,9 +843,13 @@ attempt too. Outside of GitLab CI, `once` mode keeps skipping an existing
 review. The `--force` flag repeats the review even when nothing has changed.
 
 While the review is running, the merge request can move on. Before publishing,
-`aireview` re-reads it and compares `sha`, the target branch, `diff_refs`, the
-title and the description: if any of those changed, the result is not published —
-a comment must not end up holding a review of a diff that is no longer current.
+`aireview` re-reads it and compares `sha`, the target branch and `diff_refs`:
+if any of those changed (or `[skip review]` was added to the title), the result
+is not published — a comment must not end up holding a review of a diff that
+is no longer current. If only the title or description changed while the review
+was running, the formed report is still published with a note that the text was
+edited during the run. In `--post` mode, `[skip review]` in the fresh title
+also skips the LLM run itself (useful after the initial 60-second CI wait).
 The review text is printed to stdout before the publishing attempt, so it stays
 in the job log. The previous comment is kept until the end of the next run.
 
