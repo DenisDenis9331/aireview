@@ -2,6 +2,7 @@
 require 'json'
 require 'uri'
 require_relative 'errors'
+require_relative 'review_comment_formatter'
 require_relative 'utils'
 
 module Aireview
@@ -273,86 +274,11 @@ module Aireview
     # (or the summary if oversized) is shortened with a note. Never drops
     # findings or result: a corrupted review must not be saved to GitHub.
     def fit_comment_body(body, limit = MAX_COMMENT_LENGTH)
-      return body if body.length <= limit
-
-      fitted = truncate_not_reviewed(body, limit)
-      return fitted if fitted && fitted.length <= limit
-
-      fitted = truncate_summary(fitted || body, limit)
-      return fitted if fitted && fitted.length <= limit
+      fitted = ReviewCommentFormatter.fit(body, limit: limit)
+      return fitted if fitted
 
       raise ApiError, "Review comment exceeds GitHub limit of #{limit} characters " \
                       'and cannot be shortened without dropping findings'
-    end
-
-    def truncate_not_reviewed(body, limit)
-      result_index = body.rindex(/\n## (?:Result|Результат)\n\n/)
-      return nil unless result_index
-
-      match = body[result_index..].match(/(\n## (?:Not reviewed|Не вошло в ревью)\n\n)(.*)/m)
-      return nil unless match
-
-      prefix = body[0...(result_index + match.begin(0))] + match[1]
-      rest = match[2]
-      is_ru = body.include?('Не вошло в ревью')
-      items, footer = split_items_and_footer(rest)
-
-      kept, omitted = fit_items(items, prefix: prefix, footer: footer, is_ru: is_ru, limit: limit)
-      result_items = kept
-      result_items << omission_note(omitted, is_ru) if omitted.positive?
-
-      "#{prefix}#{result_items.join}#{footer}"
-    end
-
-    def truncate_summary(body, limit)
-      summary_pattern = /(\n## (?:Summary|Сводка)\n\n)(.*?)(\n\n## )/m
-      match = body.match(summary_pattern)
-      return nil unless match
-
-      prefix = body[0...match.begin(0)] + match[1]
-      summary = match[2]
-      suffix = match[3] + body[match.end(0)..]
-      is_ru = body.include?('## Сводка')
-      note = is_ru ? "\n[сводка усечена]" : "\n[summary truncated]"
-
-      room = limit - prefix.length - suffix.length - note.length
-      return nil if room <= 0
-
-      "#{prefix}#{summary[0, room]}#{note}#{suffix}"
-    end
-
-    def split_items_and_footer(rest)
-      items = []
-      trailer = []
-      in_items = true
-      rest.lines.each do |line|
-        if in_items && line.start_with?('- ')
-          items << line
-        else
-          in_items = false
-          trailer << line
-        end
-      end
-      [items, trailer.join]
-    end
-
-    def fit_items(items, prefix:, footer:, is_ru:, limit:)
-      kept = []
-      kept_length = 0
-      items.each_with_index do |line, index|
-        remaining = items.size - (index + 1)
-        omission = remaining.positive? ? omission_note(remaining, is_ru) : ''
-        candidate_size = prefix.length + kept_length + line.length + omission.length + footer.length
-        break if candidate_size > limit
-
-        kept << line
-        kept_length += line.length
-      end
-      [kept, items.size - kept.size]
-    end
-
-    def omission_note(count, is_ru)
-      is_ru ? "- ... и ещё #{count} файлов не показано\n" : "- ... and #{count} more files not shown\n"
     end
   end
 end
