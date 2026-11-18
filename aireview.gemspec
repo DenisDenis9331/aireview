@@ -4,12 +4,12 @@ require_relative 'lib/aireview/version'
 Gem::Specification.new do |spec|
   spec.name = 'aireview'
   spec.version = Aireview::VERSION
-  spec.summary = 'Local GitLab merge request review CLI powered by LLMs'
-  spec.description = 'Reviews self-hosted GitLab merge requests with a two-pass LLM pipeline: ' \
+  spec.summary = 'GitLab merge request and GitHub pull request review CLI powered by LLMs'
+  spec.description = 'Reviews GitLab merge requests and GitHub pull requests with a two-pass LLM pipeline: ' \
                      'the first pass finds candidate findings, the second one critiques them and ' \
                      'drops the weak ones. Supports Gemini, Ollama, OpenAI, Anthropic, OpenRouter and ' \
                      'OpenAI-compatible servers, Jev as the critic, optional Jira context ' \
-                     'and posting a single updatable review note back to the merge request.'
+                     'and posting a single updatable review comment back to the merge or pull request.'
   spec.authors = ['Denis Levenko']
   spec.homepage = 'https://github.com/DenisDenis9331/aireview'
   spec.license = 'MIT'

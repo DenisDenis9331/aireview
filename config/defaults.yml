@@ -14,8 +14,9 @@
 # "Ollama models" with Gemini names.
 #
 # Model names come from the Gemini catalog (GET /v1beta/models), text models
-# without "preview" in the name only; each one is confirmed by
-# `aireview models check` with both schemas (2026-09-18).
+# without "preview" in the name only; gemini-3.* models were confirmed by
+# `aireview models check` with both schemas (2026-09-18); gemini-4-hydrogen
+# was added on 2026-11-16.
 
 review_language: en
 
@@ -29,17 +30,15 @@ llm:
   overloaded_quarantine: 120
   models:
     - provider: gemini
-      model: gemini-3.8-flash
+      model: gemini-4-hydrogen
     - provider: gemini
-      model: gemini-3.7-flash
+      model: gemini-3.8-flash
     - provider: gemini
       model: gemini-3.6-flash
     - provider: gemini
-      model: gemini-3.5-flash
-    - provider: gemini
       model: gemini-3.5-flash-lite
   generate:
-    start: gemini-3.7-flash
+    start: gemini-3.8-flash
     temperature: 0.1
   critique:
     rank: not_below_generate

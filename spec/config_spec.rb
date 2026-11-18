@@ -56,6 +56,32 @@ RSpec.describe Aireview::Config do
       end
     end
 
+    it 'reads the GitHub token, API URL and review author from the environment' do
+      Dir.mktmpdir do |dir|
+        config = described_class.load(
+          cwd: dir,
+          env: {
+            'GITHUB_TOKEN' => 'ghp-123',
+            'GITHUB_API_URL' => 'https://ghe.example.com/api/v3',
+            'GITHUB_REVIEW_AUTHOR' => 'github-actions[bot]'
+          },
+          logger: Logger.new(nil)
+        )
+
+        expect(config.require_github_token!).to eq('ghp-123')
+        expect(config.github_api_url).to eq('https://ghe.example.com/api/v3')
+        expect(config.github_review_author).to eq('github-actions[bot]')
+      end
+    end
+
+    it 'requires GITHUB_TOKEN only when asked for it' do
+      Dir.mktmpdir do |dir|
+        config = described_class.load(cwd: dir, env: {}, logger: Logger.new(nil))
+
+        expect { config.require_github_token! }.to raise_error(Aireview::ConfigError, 'GITHUB_TOKEN is required')
+      end
+    end
+
     it 'uses 60 seconds as the default LLM timeout' do
       Dir.mktmpdir do |dir|
         # A model of its own keeps the bundled defaults (timeout 180) out.
@@ -923,14 +949,14 @@ RSpec.describe Aireview::Config do
           expect(config.routing).to be_a(Aireview::ModelPool)
           expect(config.routing.pool_stage?('generate') && config.routing.pool_stage?('critique')).to be(true)
           pool = config.routing.pool
-          expect(pool.size).to eq(5)
-          expect(pool.map(&:model).uniq.size).to eq(5)
+          expect(pool.size).to eq(4)
+          expect(pool.map(&:model).uniq.size).to eq(4)
           expect(pool.map(&:provider).uniq).to eq(['gemini'])
           expect(pool.map(&:model)).to all(match(/\A[a-z0-9.-]+\z/))
           expect(pool.map(&:model)).not_to include(a_string_matching(/preview|exp/))
           # Generate does not start from the strongest model; Critique does.
-          expect(config.stage_chain(:generate).first.model).to eq('gemini-3.7-flash')
-          expect(config.stage_chain(:critique).first.model).to eq('gemini-3.8-flash')
+          expect(config.stage_chain(:generate).first.model).to eq('gemini-3.8-flash')
+          expect(config.stage_chain(:critique).first.model).to eq('gemini-4-hydrogen')
           expect(config.routing.rule).to eq('not_below_generate')
           expect(config.generate_temperature).to eq(0.1)
           expect(config.critique_temperature).to eq(0)

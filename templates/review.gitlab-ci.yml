@@ -60,6 +60,9 @@ aireview:
        $AIREVIEW_CONFIG_MOUNT
        -e "GITLAB_URL=$CI_SERVER_URL"
        -e GITLAB_TOKEN
+       -e GITHUB_TOKEN
+       -e GITHUB_API_URL
+       -e GITHUB_REVIEW_AUTHOR
        -e CI_PROJECT_ID
        -e CI_JOB_ID
        -e REVIEW_MODE

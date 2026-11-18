@@ -27,7 +27,9 @@ module Aireview
     # Config#result_signature. Without a pool the key is the same as before.
     # The LLM Critique counts only when it can run (its prompt is there),
     # Jev only when it decides (its question templates are there): with the
-    # default engine the key is what it was before Jev.
+    # default engine the key is what it was before Jev. Files the platform did
+    # not return never reach the prompts, yet the report counts them: a
+    # nonzero count enters the key, zero leaves it as before.
     def key(prompts:, config:)
       signature = config.result_signature
       source = {
@@ -37,6 +39,8 @@ module Aireview
       jev = prompts[:jev_questions]
       source['critique_engine'] = [*signature['critique_engine'], jev] if jev
       source['pool'] = signature['pool'] if signature['pool']
+      missing = prompts[:coverage]&.files_not_returned.to_i
+      source['files_not_returned'] = missing if missing.positive?
 
       Digest::SHA256.hexdigest(JSON.generate(source))[0, 16]
     end

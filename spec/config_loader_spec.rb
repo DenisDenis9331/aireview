@@ -100,6 +100,6 @@ RSpec.describe Aireview::ConfigLoader do
   it 'lists every env name it reads, without duplicates' do
     names = described_class.env_names
     expect(names).to eq(names.uniq)
-    expect(names).to include('GITLAB_TOKEN', 'LLM_MODELS', 'LLM_CRITIQUE_START', 'MAX_JIRA_COMMENT_CHARS')
+    expect(names).to include('GITLAB_TOKEN', 'GITHUB_TOKEN', 'GITHUB_API_URL', 'GITHUB_REVIEW_AUTHOR', 'LLM_MODELS', 'LLM_CRITIQUE_START', 'MAX_JIRA_COMMENT_CHARS')
   end
 end

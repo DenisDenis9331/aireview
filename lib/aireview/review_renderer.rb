@@ -41,6 +41,7 @@ module Aireview
         files_not_shown: 'files not reviewed',
         files_partial: 'files reviewed partially',
         files_unavailable: 'files without an available diff',
+        files_not_returned: 'files not returned by the platform',
         sections_truncated: 'sections truncated',
         hunks_of: 'hunks shown',
         diff_unavailable: 'diff not available',
@@ -72,6 +73,7 @@ module Aireview
         files_not_shown: 'файлов не проверено',
         files_partial: 'файлов проверено частично',
         files_unavailable: 'файлов без доступного диффа',
+        files_not_returned: 'файлов не отдано платформой',
         sections_truncated: 'секций усечено',
         hunks_of: 'хунков показано',
         diff_unavailable: 'дифф недоступен',
@@ -172,6 +174,7 @@ module Aireview
         files_not_shown: coverage.files_not_shown.size,
         files_partial: coverage.files_partial.size,
         files_unavailable: coverage.files_unavailable.size,
+        files_not_returned: coverage.files_not_returned,
         sections_truncated: coverage.truncated_sections.size
       }.reject { |_, count| count.zero? }.map { |key, count| "#{count} #{label(key)}" }
 
@@ -186,11 +189,19 @@ module Aireview
         "- #{file[:path]}: #{file[:shown]}/#{file[:total]} #{label(:hunks_of)}"
       end
       lines += coverage.files_unavailable.map { |path| "- #{path}: #{label(:diff_unavailable)}" }
+      lines += summary_lines(coverage)
+
+      "\n## #{label(:not_reviewed)}\n\n#{lines.join("\n")}\n"
+    end
+
+    # What the report can only count or name, not list by file.
+    def summary_lines(coverage)
+      lines = []
+      lines << "- #{coverage.files_not_returned} #{label(:files_not_returned)}" if coverage.files_not_returned.positive?
       unless coverage.truncated_sections.empty?
         lines << "- #{label(:section_list)}: #{coverage.truncated_sections.join(', ')}"
       end
-
-      "\n## #{label(:not_reviewed)}\n\n#{lines.join("\n")}\n"
+      lines
     end
 
     # A key switch stays in the logs; a model switch is visible to the

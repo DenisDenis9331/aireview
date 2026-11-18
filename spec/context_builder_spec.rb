@@ -64,6 +64,17 @@ RSpec.describe Aireview::ContextBuilder do
       expect(context.coverage).to be_complete
     end
 
+    it 'takes the files the platform did not return into the coverage, not into the prompt' do
+      context = builder.prepare(merge_request: merge_request.merge('files_not_returned' => 412),
+                                changes: [change('app.rb', "@@ -1 +1 @@\n-old\n+new\n")])
+      plain = builder.prepare(merge_request: merge_request, changes: [change('app.rb', "@@ -1 +1 @@\n-old\n+new\n")])
+
+      expect(context.coverage.files_not_returned).to eq(412)
+      expect(context.coverage.complete?).to be(false)
+      expect(plain.coverage.complete?).to be(true)
+      expect(context.user_prompt).to eq(plain.user_prompt)
+    end
+
     it 'gives both stages the same context' do
       context = builder.prepare(merge_request: merge_request, changes: changes, jira_issue: jira_issue)
 

@@ -20,6 +20,9 @@ module Aireview
     ENV_MAPPING = {
       'gitlab_url' => 'GITLAB_URL',
       'gitlab_token' => 'GITLAB_TOKEN',
+      'github_token' => 'GITHUB_TOKEN',
+      'github_api_url' => 'GITHUB_API_URL',
+      'github_review_author' => 'GITHUB_REVIEW_AUTHOR',
       'jira_url' => 'JIRA_URL',
       'jira_login' => 'JIRA_LOGIN',
       'jira_password' => 'JIRA_PASSWORD',
@@ -209,7 +212,7 @@ module Aireview
       value.split(',').map(&:strip).reject(&:empty?).map { |item| ModelCandidate.parse_item(item) }
     end
 
-    # LLM_MODELS=gemini/gemini-3.8-flash,gemini/gemini-3.7-flash;
+    # LLM_MODELS=gemini/gemini-4-hydrogen,gemini/gemini-3.8-flash;
     # LLM_GENERATE_START / LLM_CRITIQUE_START — a model from the pool;
     # LLM_CRITIQUE_RANK, LLM_CRITIQUE_ALLOW_WEAKER=true|false.
     def pool_env_config(env)
