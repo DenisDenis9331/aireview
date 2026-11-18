@@ -14,16 +14,19 @@ module Aireview
     # The address is part of the name, scheme included: two servers with the
     # same model (http and https ones too) are two models for quarantine,
     # reserves and the review key.
+    def display_name
+      "#{provider}/#{model}"
+    end
+
     def to_s
-      name = "#{provider}/#{model}"
-      api_base ? "#{name}@#{api_base.chomp('/')}" : name
+      api_base ? "#{display_name}@#{api_base.chomp('/')}" : display_name
     end
 
     # Every way a start or a CLI override may name this model: bare,
     # "provider/name", or the full name with the address. One list for the
     # config check and for picking the model, so they cannot disagree.
     def names
-      [model.to_s, "#{provider}/#{model}", to_s].uniq
+      [model.to_s, display_name, to_s].uniq
     end
 
     def same_model?(other)

@@ -97,11 +97,11 @@ module Aireview
 
     # Stages answered by a model other than the primary one, for the report.
     def models
-      @used.transform_values { |route| route.candidate.to_s }
+      @used.transform_values { |route| route.candidate.display_name }
     end
 
     def fallback_models
-      @used.select { |_, route| route.fallback? }.transform_values { |route| route.candidate.to_s }
+      @used.select { |_, route| route.fallback? }.transform_values { |route| route.candidate.display_name }
     end
 
     # The model that answered last in the stage and its place in the chain.
