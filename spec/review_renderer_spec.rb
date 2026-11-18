@@ -112,6 +112,16 @@ RSpec.describe Aireview::ReviewRenderer do
       .to include('Использована резервная модель: critique — m.')
   end
 
+  it 'names the models that answered each stage in the report language' do
+    used = {'generate' => 'gemini/gemini-3.8-flash', 'critique' => 'gemini/gemini-4-hydrogen'}
+
+    expect(described_class.new.render([], summary: 'x', models: used))
+      .to include('Models: generate — gemini/gemini-3.8-flash, critique — gemini/gemini-4-hydrogen.')
+    expect(described_class.new(language: 'ru').render([], summary: 'x', models: used))
+      .to include('Модели: generate — gemini/gemini-3.8-flash, critique — gemini/gemini-4-hydrogen.')
+    expect(described_class.new.render([], summary: 'x', models: {})).not_to include('Models:')
+  end
+
   it 'notes a critique that ran on a model weaker than generate, in the report language' do
     text = described_class.new.render([], summary: 'x', critique_weaker: true)
     expect(text).to include('Critique ran on a model weaker than Generate')

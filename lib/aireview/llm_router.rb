@@ -96,6 +96,10 @@ module Aireview
     end
 
     # Stages answered by a model other than the primary one, for the report.
+    def models
+      @used.transform_values { |route| route.candidate.to_s }
+    end
+
     def fallback_models
       @used.select { |_, route| route.fallback? }.transform_values { |route| route.candidate.to_s }
     end

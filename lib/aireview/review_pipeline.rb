@@ -81,6 +81,7 @@ module Aireview
         accepted,
         summary: summary,
         coverage: context.coverage,
+        models: @reviewer.models,
         fallback_models: @reviewer.fallback_models,
         critique_weaker: critique && @reviewer.critique_weaker?,
         jev_note: jev_note
