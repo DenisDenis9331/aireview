@@ -23,8 +23,8 @@ MVP flow:
 
 ## Requirements
 
-- Ruby 3.1.3 or newer (CI runs the tests on 3.1, 3.3, 3.4 and 4.0)
-- Bundler 2.3.26 for the repository checkout; `gem install` needs no specific Bundler
+- Ruby 4.0.10 or newer
+- Bundler 4.0+ for the repository checkout; `gem install` needs no specific Bundler
 - A GitLab personal access token, or a GitHub token for pull requests
 - An API key for a remote LLM provider; a local Ollama needs no key
 - Optionally, a Jira login and password
@@ -41,11 +41,11 @@ aireview --help
 From a checkout of the repository:
 
 ```bash
-bundle _2.3.26_ install
-bundle _2.3.26_ exec bin/aireview --help
+bundle install
+bundle exec bin/aireview --help
 ```
 
-The examples below use `bundle _2.3.26_ exec bin/aireview`; with the gem
+The examples below use `bundle exec bin/aireview`; with the gem
 installed, replace it with plain `aireview`.
 
 ## Configuration
@@ -742,14 +742,14 @@ unverifiable. Any other 422 is not retried.
 ## Usage
 
 ```bash
-bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123
-bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --post
-bundle _2.3.26_ exec bin/aireview review https://github.com/owner/repo/pull/42 --post
-bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --no-jira
-bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --dry-run --verbose
-bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --generate-model gemini-3.6-flash --critique-model gemini-3.8-flash
-bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --generate-model gemini-3.6-flash --generate-temperature 0.3 --critique-model gemini-3.8-flash --critique-temperature 0
-bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --no-critique
+bundle exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123
+bundle exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --post
+bundle exec bin/aireview review https://github.com/owner/repo/pull/42 --post
+bundle exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --no-jira
+bundle exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --dry-run --verbose
+bundle exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --generate-model gemini-3.6-flash --critique-model gemini-3.8-flash
+bundle exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --generate-model gemini-3.6-flash --generate-temperature 0.3 --critique-model gemini-3.8-flash --critique-temperature 0
+bundle exec bin/aireview review https://gitlab.company.com/team/project/-/merge_requests/123 --no-critique
 ```
 
 - `--generate-model MODEL` overrides the model for the Generate pass only.
@@ -767,8 +767,8 @@ bundle _2.3.26_ exec bin/aireview review https://gitlab.company.com/team/project
 ### Checking the models
 
 ```bash
-bundle _2.3.26_ exec bin/aireview models check
-bundle _2.3.26_ exec bin/aireview models check --config .aireview.yml --strict --verbose
+bundle exec bin/aireview models check
+bundle exec bin/aireview models check --config .aireview.yml --strict --verbose
 ```
 
 Every model of both stage chains gets two small requests — one with the
@@ -905,7 +905,7 @@ aireview:
     LLM_TIMEOUT: "60"
     LLM_HTTP_PROXY: "http://127.0.0.1:8888"
   script:
-    - bundle _2.3.26_ exec bin/aireview review "$MR_URL" --verbose
+    - bundle exec bin/aireview review "$MR_URL" --verbose
   timeout: 45m
   retry:
     max: 1
@@ -1074,9 +1074,9 @@ docker run --rm --env-file .env -v "$PWD/.aireview.yml:/app/.aireview.yml:ro" ai
 ## Testing
 
 ```bash
-bundle _2.3.26_ exec rspec
-bundle _2.3.26_ exec rspec spec/config_spec.rb
-bundle _2.3.26_ exec rspec spec/secret_scrubber_spec.rb
+bundle exec rspec
+bundle exec rspec spec/config_spec.rb
+bundle exec rspec spec/secret_scrubber_spec.rb
 ```
 
 ## Notes

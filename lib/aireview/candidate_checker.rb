@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 require 'logger'
-require 'set'
 
 module Aireview
   # A mechanical check that a candidate points at the code, against the diff

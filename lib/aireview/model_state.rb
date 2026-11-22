@@ -1,5 +1,4 @@
 # frozen_string_literal: true
-require 'set'
 
 module Aireview
   # What the router learned about a model during the run. Three things with

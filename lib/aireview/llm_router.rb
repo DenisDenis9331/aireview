@@ -1,5 +1,4 @@
 # frozen_string_literal: true
-require 'set'
 require_relative 'errors'
 require_relative 'llm_failure'
 require_relative 'model_state'
@@ -241,7 +240,7 @@ module Aireview
     # Every visit either sends a request or excludes the model: otherwise the
     # walk round the pool would never stop. A model whose keys are all out of
     # daily quota is excluded until the end of the run.
-    def try_candidate(stage, slot, visits, carry, &request)
+    def try_candidate(stage, slot, visits, carry, &)
       routes = candidate_routes(stage, slot, carry)
       tried = false
       routes.each do |route|
@@ -249,7 +248,7 @@ module Aireview
 
         tried = true
         log_switch(stage, route, visits)
-        status, response = try_route(stage, route, visits, &request)
+        status, response = try_route(stage, route, visits, &)
         return [:ok, remember(stage, route, response)] if status == :ok
         return [:next_model, Carry.new(route.candidate.key_source, route.key_index)] if status == :next_model
       end

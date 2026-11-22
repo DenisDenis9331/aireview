@@ -2,7 +2,6 @@
 require 'json'
 require 'logger'
 require 'optparse'
-require 'pathname'
 require 'uri'
 require 'yaml'
 

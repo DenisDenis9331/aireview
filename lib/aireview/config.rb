@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 require 'logger'
-require 'pathname'
 require 'yaml'
 require_relative 'errors'
 require_relative 'utils'
@@ -57,8 +56,8 @@ module Aireview
 
     attr_reader :config_path, :layers
 
-    def self.load(**options)
-      ConfigLoader.load(**options)
+    def self.load(**)
+      ConfigLoader.load(**)
     end
 
     def self.env_names
