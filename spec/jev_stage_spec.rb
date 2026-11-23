@@ -48,6 +48,7 @@ RSpec.describe Aireview::JevStage do
 
     expect(outcome.accepted).to eq([candidates[0], candidates[2]])
     expect(outcome.note).to eq(:jev)
+    expect(outcome.model).to eq('jev/jev-1.13.0')
     expect(llm_calls).to be_empty
     expect(log.string).to include('Critique (jev) reject C2: reject (real_issue=0.9)')
   end

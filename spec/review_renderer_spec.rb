@@ -110,6 +110,14 @@ RSpec.describe Aireview::ReviewRenderer do
       .to include("ok\n\nModels: generate — gemini/gemini-3.8-flash, critique — gemini/gemini-4-hydrogen.\n\nThis report was generated")
     expect(described_class.new(language: 'ru').render([], summary: 'x', models: used))
       .to include('Модели: generate — gemini/gemini-3.8-flash, critique — gemini/gemini-4-hydrogen.')
+    expect(described_class.new.render([], summary: 'x', models: {'generate' => 'g', 'critique' => :critique_no_candidates}))
+      .to include('Models: generate — g, critique — skipped (no candidates).')
+    expect(described_class.new(language: 'ru').render([], summary: 'x', models: {'generate' => 'g', 'critique' => :critique_no_candidates}))
+      .to include('Модели: generate — g, critique — пропущена (нет замечаний).')
+    expect(described_class.new.render([], summary: 'x', models: {'generate' => 'g', 'critique' => :critique_disabled}))
+      .to include('Models: generate — g, critique — disabled.')
+    expect(described_class.new(language: 'ru').render([], summary: 'x', models: {'generate' => 'g', 'critique' => :critique_disabled}))
+      .to include('Модели: generate — g, critique — отключена.')
     expect(described_class.new.render([], summary: 'x', models: {})).not_to include('Models:')
   end
 

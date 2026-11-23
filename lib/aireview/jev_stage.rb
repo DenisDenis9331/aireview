@@ -13,7 +13,7 @@ module Aireview
   class JevStage
     # The report line: :jev (Jev decided everything), :jev_partial (some
     # went to the LLM), :jev_failed (the LLM decided everything).
-    Outcome = Struct.new(:accepted, :note, keyword_init: true)
+    Outcome = Struct.new(:accepted, :note, :model, keyword_init: true)
 
     def initialize(config:, critic:, logger: Logger.new($stderr))
       @config = config
@@ -37,7 +37,8 @@ module Aireview
       accepted = drop_duplicates(in_generate_order(accepted, candidates), result.answers)
       @logger.info("Pipeline critique pass completed with #{accepted.size} kept candidate(s) (engine=jev, " \
                    "model=#{result.model}, requests=#{result.requests})")
-      Outcome.new(accepted: accepted, note: unverifiable.empty? || fail? ? :jev : :jev_partial)
+      Outcome.new(accepted: accepted, note: unverifiable.empty? || fail? ? :jev : :jev_partial,
+                  model: "jev/#{result.model}")
     end
 
     private

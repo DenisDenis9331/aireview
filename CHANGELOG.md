@@ -3,7 +3,8 @@
 ## Unreleased
 
 - The report always shows a `Models: generate — …, critique — …` line with the
-  models that answered each stage (without `api_base`), replacing the separate
+  models that answered each stage (without `api_base`, and with `skipped (no
+  candidates)` or `disabled` when Critique did not run), replacing the separate
   `Fallback model used:` line.
 - Removed multi-key environment variables (`GEMINI_API_KEYS`,
   `OPENAI_API_KEYS`, `ANTHROPIC_API_KEYS`, `OPENROUTER_API_KEYS`): each

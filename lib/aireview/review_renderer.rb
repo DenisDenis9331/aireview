@@ -47,6 +47,8 @@ module Aireview
         diff_unavailable: 'diff not available',
         section_list: 'Truncated sections',
         models_used: 'Models',
+        critique_no_candidates: 'skipped (no candidates)',
+        critique_disabled: 'disabled',
         critique_weaker: 'Critique ran on a model weaker than Generate: the findings were checked less strictly.',
         jev: 'The findings were checked by Jev, a fast classifier, without refining their wording.',
         jev_partial: 'The findings were checked by Jev, a fast classifier, without refining their wording; ' \
@@ -79,6 +81,8 @@ module Aireview
         diff_unavailable: 'дифф недоступен',
         section_list: 'Усечённые секции',
         models_used: 'Модели',
+        critique_no_candidates: 'пропущена (нет замечаний)',
+        critique_disabled: 'отключена',
         critique_weaker: 'Критика выполнена моделью слабее generate: замечания проверены менее строго.',
         jev: 'Замечания проверены быстрым классификатором Jev, без уточнения формулировок.',
         jev_partial: 'Замечания проверены быстрым классификатором Jev, без уточнения формулировок; ' \
@@ -222,7 +226,10 @@ module Aireview
     def models_note(models)
       return '' if models.nil? || models.empty?
 
-      used = models.map { |stage, model| "#{stage} — #{model}" }.join(', ')
+      used = models.map do |stage, model|
+        text = model.is_a?(Symbol) ? label(model) : model
+        "#{stage} — #{text}"
+      end.join(', ')
       "\n#{label(:models_used)}: #{used}.\n"
     end
 
