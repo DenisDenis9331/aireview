@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The report always shows a `Models: generate — …, critique — …` line with the
+  models that answered each stage (without `api_base`), replacing the separate
+  `Fallback model used:` line.
+- Removed multi-key environment variables (`GEMINI_API_KEYS`,
+  `OPENAI_API_KEYS`, `ANTHROPIC_API_KEYS`, `OPENROUTER_API_KEYS`): each
+  provider takes a single `*_API_KEY`. On daily quota exhaustion or a rate
+  limit after one retry, the router moves to the next model in the chain.
 - GitHub pull requests: `aireview review https://github.com/owner/repo/pull/42`
   reviews a pull request on github.com or GitHub Enterprise Server, and
   `--post` keeps one updatable conversation comment, as on GitLab. The token

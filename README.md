@@ -62,7 +62,6 @@ JIRA_URL=https://jira.company.com
 JIRA_LOGIN=user
 JIRA_PASSWORD=xxx
 GEMINI_API_KEY=xxx
-GEMINI_API_KEYS=xxx,yyy
 LLM_PROVIDER=gemini
 LLM_TEMPERATURE=0
 LLM_TIMEOUT=120
@@ -97,9 +96,9 @@ shared default when a stage has no provider of its own. Gemini and Ollama
 are the ones the image defaults and the verified models are about; for the
 others run `aireview models check` before relying on a model.
 
-Each provider takes its keys from its own variables:
-`GEMINI_API_KEY(S)`, `OPENAI_API_KEY(S)`, `ANTHROPIC_API_KEY(S)`,
-`OPENROUTER_API_KEY(S)`; `LLM_API_KEY` is the shared fallback.
+Each provider takes its key from its own variable:
+`GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+`OPENROUTER_API_KEY`; `LLM_API_KEY` is the shared fallback.
 
 `REVIEW_LANGUAGE` (or `review_language` in `.aireview.yml`) sets the language
 of the review: both the LLM answers and the headings of the rendered report.
@@ -141,7 +140,7 @@ What `config/defaults.yml` sets today (the file is the source of truth):
 | Overload quarantine | 120 s |
 | Report language | `en` |
 
-The default model pool only needs `GEMINI_API_KEY` (or `GEMINI_API_KEYS`);
+The default model pool only needs `GEMINI_API_KEY`;
 GitLab access still requires `GITLAB_TOKEN`.
 
 The configuration layers, weakest first:
@@ -209,7 +208,7 @@ release at peak hours.
 No model is probed before a review: there are no test requests to five
 models per MR, availability is learned from the working requests — the first
 Generate request is the probe, and what the router learns it remembers until
-the end of the run (see "Fallback models and keys"). The separate smoke test
+the end of the run (see "Fallback models"). The separate smoke test
 of every model with both schemas (`aireview models check`) runs on an image
 release and on a schedule, not on MRs.
 
@@ -347,7 +346,7 @@ run right away: the model gets one short retry (~30 s), then goes into
 quarantine for two minutes while the request goes to the next model;
 without a fallback model the router waits for the quarantine to end and
 tries once more. Three requests per model per stage in total (see "Fallback
-models and keys"). Only the failed stage is repeated, not the whole run.
+models"). Only the failed stage is repeated, not the whole run.
 
 Project rules live in `.aireview.yml`. The `generate.model` and
 `critique.model` settings are not inherited from the base `llm` settings: a
@@ -453,11 +452,10 @@ with an error instead of silently reviewing less. Raise the limits or extend
 `ignore_paths`. `--dry-run` prints the sizes of every part and the coverage;
 `--verbose` logs them during a real run.
 
-### Fallback models and keys
+### Fallback models
 
-The primary model can sit under load (503) for half a day, and a key can run
-out of its daily quota. Neither is cured by waiting, so a stage can have a
-fallback model and a provider can have a fallback key:
+The primary model can sit under load (503) for half a day or run out of its
+daily quota. Neither is cured by waiting, so a stage can have fallback models:
 
 - `llm.generate.fallbacks` / `llm.critique.fallbacks` in YAML or
   `LLM_GENERATE_FALLBACK_MODEL` / `LLM_CRITIQUE_FALLBACK_MODEL` in the
@@ -466,14 +464,6 @@ fallback model and a provider can have a fallback key:
   without it the stage provider is used. A fallback model can have its own
   `max_prompt_chars`: when the assembled request does not fit, that model is
   skipped, the context is not cut for it.
-- `GEMINI_API_KEYS=key1,key2`: keys in order of preference; `GEMINI_API_KEY`
-  still works and means a single key. Google counts quotas per Google Cloud
-  project and per model, so a reserve key only makes sense from another
-  project. Use fallback credentials in compliance with the provider's quota
-  and billing terms: Google's
-  [API limitations](https://developers.google.com/terms#api_limitations)
-  forbid circumventing its limits regardless of the project's billing. Keys
-  live only in the environment, never in `.aireview.yml`.
 
 #### Shared model pool
 
@@ -548,9 +538,9 @@ What happens on which error:
 
 | Error | Reaction |
 |---|---|
-| Daily quota (`quotaId` like `…PerDay…` in Google's answer) | No retries: the next key on the same model. The "key + model" pair is remembered until the end of the run so that Critique and the JSON repair do not hit it again. Out of keys: the model is excluded until the end of the run, the request goes to the next one. |
-| Per-minute limit (429 with a "retry in N s" hint) | One retry after the hinted delay, then the next key. Out of keys: the model is quarantined for the hinted time, the request goes to the next one. |
-| Overloaded (503) or timeout | One short retry (~30 s), then a quarantine of `llm.overloaded_quarantine` / `LLM_OVERLOADED_QUARANTINE` (120 s by default) and the next model with the same key. |
+| Daily quota (`quotaId` like `…PerDay…` in Google's answer) | No retries: the model is excluded until the end of the run so that Critique and the JSON repair do not hit it again, and the request goes to the next one. |
+| Per-minute limit (429 with a "retry in N s" hint) | One retry after the hinted delay, then the model is quarantined for the hinted time and the request goes to the next one. |
+| Overloaded (503) or timeout | One short retry (~30 s), then a quarantine of `llm.overloaded_quarantine` / `LLM_OVERLOADED_QUARANTINE` (120 s by default) and the next model. |
 | The provider has no such model (the answer text names the model: retired, a typo, not pulled into Ollama) | No retries: the model is excluded until the end of the run, the request goes to the next one. A bare 404 without such text is fatal: a wrong `LLM_API_BASE` answers the same, and the next model will not help. |
 | An invalid result (not JSON, not the schema, foreign ids in the verdicts) — and still invalid after one repair by the same model | The model is excluded for this stage, the stage starts over on the next model with the original request. For Critique the candidates already obtained are kept, Generate is not repeated. |
 | Other API errors (context length, auth) | The run fails right away: a fallback model would answer the same. |
@@ -563,11 +553,11 @@ finite:
 
 - **three requests per model per stage** (`MAX_ATTEMPTS_PER_MODEL`). Every
   request sent counts regardless of its outcome, including the short retry
-  and the JSON repair; the keys of one model share one counter, a quarantine
-  does not reset it. Out of requests — the model leaves the stage; a JSON
-  repair without requests left is not sent, and the result counts as invalid
-  (see the table). When every model of the stage is out or excluded, the
-  stage ends at once, quarantines are not waited for;
+  and the JSON repair; a quarantine does not reset it. Out of requests —
+  the model leaves the stage; a JSON repair without requests left is not
+  sent, and the result counts as invalid (see the table). When every model
+  of the stage is out or excluded, the stage ends at once, quarantines are
+  not waited for;
 - **the time budget** of the LLM part of the run: `llm.time_budget` /
   `LLM_TIME_BUDGET`, 1800 seconds by default. A pause or a quarantine wait
   that does not fit into the remainder is skipped, the request timeout is
@@ -590,13 +580,12 @@ The review key (see "A single comment per merge request") is computed from
 the configured primary model, not from the one that answered: a review made
 by a fallback model is not rewritten on the next push without changes in the
 MR, and adding a fallback model to a per-stage chain does not re-run the
-review on every open MR. When a stage went to a fallback model, the report
-ends with a `Fallback model used: critique — …` line; the log names, for
-every stage, the model that answered and its place in the chain
-(`model=gemini/gemini-3.6-flash (2/5)`). A key switch stays in the log only,
-and key values never reach the log. `--dry-run` prints the model chains, the
-number of keys per provider, the time budget and the quarantine length;
-`--no-fallbacks` leaves one model and one key per stage.
+review on every open MR. The report ends with a `Models: generate — …,
+critique — …` line naming the models that answered; the log names, for every
+stage, the model that answered and its place in the chain
+(`model=gemini/gemini-3.6-flash (2/5)`). Key values never reach the log.
+`--dry-run` prints the model chains, the time budget and the quarantine
+length; `--no-fallbacks` leaves only the primary model per stage.
 
 ### Checking that findings point at the diff
 
@@ -760,7 +749,7 @@ bundle exec bin/aireview review https://gitlab.company.com/team/project/-/merge_
 - `--no-jira` turns off the Jira enrichment even when the MR carries an issue key.
 - `--dry-run` prints the LLM settings, the context sizes and coverage, and the Generate prompt, plus the Critique prompt unless `--no-critique` is given.
 - `--no-critique` skips the second pass and renders the Generate candidates directly.
-- `--no-fallbacks` uses only the primary model and the first API key of each stage.
+- `--no-fallbacks` uses only the primary model of each stage.
 - `--review-mode MODE` sets the behaviour when a review has already been published: `update` or `once`.
 - `--force` reviews again even when a review for this state of the MR is already published.
 
@@ -919,7 +908,7 @@ is itself bounded by `LLM_TIME_BUDGET` (30 minutes by default, pauses and
 fallback models included), the rest is reading the MR and Jira and
 publishing.
 
-Set secrets such as `GITLAB_TOKEN`, `GEMINI_API_KEY` / `GEMINI_API_KEYS` and
+Set secrets such as `GITLAB_TOKEN`, `GEMINI_API_KEY` and
 the optional Jira credentials in the GitLab CI/CD variables. If the job should publish the result
 back to the merge request, add `--post` to the review command.
 

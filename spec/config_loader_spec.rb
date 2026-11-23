@@ -72,7 +72,7 @@ RSpec.describe Aireview::ConfigLoader do
       'LLM_PROVIDER' => 'gemini', 'LLM_TEMPERATURE' => '0.2', 'LLM_TIME_BUDGET' => '600',
       'LLM_GENERATE_MODEL' => 'g', 'LLM_GENERATE_FALLBACK_MODEL' => 'r1, ollama/q:7b',
       'LLM_MODELS' => 'a,gemini/b', 'LLM_CRITIQUE_ALLOW_WEAKER' => 'yes',
-      'GEMINI_API_KEYS' => 'one, two', 'LLM_API_KEY' => 'generic', 'MAX_DIFF_CHARS' => '500',
+      'GEMINI_API_KEY' => 'one', 'LLM_API_KEY' => 'generic', 'MAX_DIFF_CHARS' => '500',
       'LLM_HTTP_PROXY' => ' '
     }
 
@@ -84,7 +84,7 @@ RSpec.describe Aireview::ConfigLoader do
         'critique' => {'allow_weaker' => true}
       },
       'context' => {'max_diff_chars' => 500},
-      'gemini_api_keys' => %w[one two],
+      'gemini_api_key' => 'one',
       'llm_api_key' => 'generic'
     )
   end

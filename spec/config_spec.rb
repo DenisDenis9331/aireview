@@ -591,15 +591,13 @@ RSpec.describe Aireview::Config do
         end
       end
 
-      it 'lists API keys in order, preferring GEMINI_API_KEYS over GEMINI_API_KEY' do
+      it 'returns the provider API key, or [nil] for a keyless provider' do
         Dir.mktmpdir do |dir|
           single = load_with(dir, env: {'GEMINI_API_KEY' => 'one'})
           expect(single.provider_api_keys('gemini')).to eq(['one'])
-
-          many = load_with(dir, env: {'GEMINI_API_KEY' => 'one', 'GEMINI_API_KEYS' => 'two, three'})
-          expect(many.provider_api_keys(:gemini)).to eq(%w[two three])
-          expect(many.provider_api_key('gemini')).to eq('one')
-          expect(many.provider_api_keys('ollama')).to eq([nil])
+          expect(single.provider_api_keys(:gemini)).to eq(['one'])
+          expect(single.provider_api_key('gemini')).to eq('one')
+          expect(single.provider_api_keys('ollama')).to eq([nil])
         end
       end
 
@@ -624,11 +622,11 @@ RSpec.describe Aireview::Config do
         end
       end
 
-      it 'keeps only the primary model and the first key when fallbacks are disabled' do
+      it 'keeps only the primary model when fallbacks are disabled' do
         Dir.mktmpdir do |dir|
           env = {
             'LLM_GENERATE_MODEL' => 'g', 'LLM_GENERATE_FALLBACK_MODEL' => 'f',
-            'LLM_CRITIQUE_MODEL' => 'c', 'GEMINI_API_KEYS' => 'one,two'
+            'LLM_CRITIQUE_MODEL' => 'c', 'GEMINI_API_KEY' => 'one'
           }
           config = load_with(dir, env: env).with_overrides(no_fallbacks: true, generate_model: 'cli')
 

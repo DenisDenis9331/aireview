@@ -76,7 +76,7 @@ module Aireview
     end
 
     # CLI overrides change only the primary model of a stage, the reserves
-    # from the config stay; no_fallbacks leaves one model and one key.
+    # from the config stay; no_fallbacks leaves only the primary model.
     # no_critique — --no-critique: the run has no Critique, so its settings
     # are neither routed nor validated (see llm_stages).
     # Seven named flags of the CLI read better than a struct for its own sake.

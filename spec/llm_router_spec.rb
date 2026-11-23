@@ -57,7 +57,7 @@ RSpec.describe Aireview::LlmRouter do
   def run(stage: 'generate', pinned: false, script:)
     calls = []
     result = router.call(stage: stage, request_chars: 10, pinned: pinned) do |route, _timeout|
-      calls << "#{route.candidate.model}@#{now[:time].to_i}#{route.key_count > 1 ? "/#{route.key_index + 1}" : ''}"
+      calls << "#{route.candidate.model}@#{now[:time].to_i}"
       answer = script.fetch(route.candidate.model).shift
       raise answer if answer.is_a?(Exception)
 
@@ -113,7 +113,7 @@ RSpec.describe Aireview::LlmRouter do
       expect(result).to eq('from a')
       expect(calls).to eq(%w[gemini-a@0 gemini-a@30 gemini-b@30 gemini-b@60 gemini-a@150])
       expect(sleeps).to eq([30.0, 30.0, 90.0])
-      expect(router.fallback_models).to eq({})
+      expect(router.models).to eq('generate' => 'gemini/gemini-a')
     end
 
     it 'ends the stage at once when every model has used its attempts, without waiting for quarantines' do
@@ -138,7 +138,7 @@ RSpec.describe Aireview::LlmRouter do
       expect(result).to eq('from b')
       expect(calls).to eq(%w[gemini-a@0 gemini-b@0])
       expect(sleeps).to be_empty
-      expect(router.fallback_models).to eq('generate' => 'gemini/gemini-b')
+      expect(router.models).to eq('generate' => 'gemini/gemini-b')
 
       _, calls = run(stage: 'critique', script: {'gemini-b' => ['critique b']})
       expect(calls).to eq(%w[gemini-b@0])
@@ -189,10 +189,10 @@ RSpec.describe Aireview::LlmRouter do
       expect(calls).to eq(%w[gemini-pro@0 gemini-flash@0])
       expect(router.answered('critique')).to eq('gemini/gemini-flash (2/2)')
       expect(router.critique_weaker?).to be(false)
-      expect(router.fallback_models).to eq('critique' => 'gemini/gemini-flash')
+      expect(router.models).to eq('generate' => 'gemini/gemini-flash', 'critique' => 'gemini/gemini-flash')
     end
 
-    it 'omits api_base from models and fallback_models' do
+    it 'omits api_base from models' do
       pool = Aireview::ModelPool.new(
         items: [
           {'provider' => 'openai', 'model' => 'primary', 'api_base' => 'http://user:secret@llm.internal/v1'},
@@ -209,7 +209,6 @@ RSpec.describe Aireview::LlmRouter do
       end
 
       expect(custom_router.models).to eq('generate' => 'openai/reserve')
-      expect(custom_router.fallback_models).to eq('generate' => 'openai/reserve')
     end
 
     # Generate moved from the overloaded flash to lite; in Critique pro is
@@ -335,47 +334,30 @@ RSpec.describe Aireview::LlmRouter do
     end
   end
 
-  describe 'keys' do
-    let(:keys) { %w[key-one key-two] }
+  describe 'quota and rate limits' do
+    let(:models) { %w[gemini-a gemini-b] }
 
-    it 'excludes a model whose keys are all out of daily quota instead of looping over them' do
-      expect do
-        run(script: {'gemini-a' => [daily_quota_error, daily_quota_error]})
-      end.to raise_error(Aireview::ApiError, /key 1\/2\): daily quota exhausted.*key 2\/2\): daily quota exhausted/)
+    it 'excludes a model that is out of daily quota for the rest of the run without retrying' do
+      result, calls = run(script: {'gemini-a' => [daily_quota_error], 'gemini-b' => ['from b']})
 
-      expect do
-        run(stage: 'critique', script: {})
-      end.to raise_error(Aireview::ApiError, /gemini\/gemini-a: daily quota exhausted on every key/)
-    end
-
-    it 'counts attempts across the keys of a model' do
-      expect do
-        run(script: {'gemini-a' => [daily_quota_error, overloaded_error, overloaded_error]})
-      end.to raise_error(Aireview::ApiError, /failed on every configured route/) do |error|
-        expect(error.message).to include('gemini/gemini-a (key 1/2): daily quota exhausted after 1 attempt(s)')
-        expect(error.message).to include('gemini/gemini-a (key 2/2): overloaded after 2 attempt(s)')
-      end
-
-      expect(sleeps).to eq([30.0])
-    end
-
-    it 'lifts the quarantine of a model once any of its keys answers' do
-      limited = RubyLLM::RateLimitError.new('Quota exceeded. Please retry in 100s.')
-      allow(config).to receive(:llm_time_budget).and_return(100)
-      _, calls = run(script: {'gemini-a' => [limited, 'bad json']})
-      expect(calls).to eq(%w[gemini-a@0/1 gemini-a@0/2])
-
-      _, calls = run(pinned: true, script: {'gemini-a' => ['repaired']})
-      expect(calls).to eq(%w[gemini-a@0/2])
+      expect(result).to eq('from b')
+      expect(calls).to eq(%w[gemini-a@0 gemini-b@0])
       expect(sleeps).to be_empty
+
+      expect do
+        run(stage: 'critique', script: {'gemini-b' => [daily_quota_error]})
+      end.to raise_error(
+        Aireview::ApiError,
+        /gemini\/gemini-a: daily quota exhausted earlier in this run; gemini\/gemini-b: daily quota exhausted after 1 attempt\(s\)/
+      )
     end
 
-    it 'retries a rate limit once with the provider hint, then tries the next key' do
+    it 'retries a rate limit once with the provider hint, then quarantines the model and moves on' do
       limited = RubyLLM::RateLimitError.new('Quota exceeded. Please retry in 5s.')
-      result, calls = run(script: {'gemini-a' => [limited, limited, 'ok']})
+      result, calls = run(script: {'gemini-a' => [limited, limited], 'gemini-b' => ['from b']})
 
-      expect(result).to eq('ok')
-      expect(calls).to eq(%w[gemini-a@0/1 gemini-a@10/1 gemini-a@10/2])
+      expect(result).to eq('from b')
+      expect(calls).to eq(%w[gemini-a@0 gemini-a@10 gemini-b@10])
       expect(sleeps).to eq([10.0])
     end
   end
@@ -416,30 +398,6 @@ RSpec.describe Aireview::LlmRouter do
       expect(result).to eq('from b')
       # The first request gets the full LLM_TIMEOUT, the second the remainder of the budget.
       expect(calls).to eq([['gemini-a', 60.0], ['gemini-b', 30.0]])
-    end
-  end
-
-  describe 'keys carried between models' do
-    let(:models) { %w[gemini-a gemini-b] }
-    let(:keys) { %w[key-one key-two] }
-
-    it 'continues the next model of the same provider from the key that was in use' do
-      result, calls = run(script: {
-        'gemini-a' => [daily_quota_error, overloaded_error, overloaded_error],
-        'gemini-b' => [daily_quota_error, 'from b']
-      })
-
-      expect(result).to eq('from b')
-      # Key 1 of model a is out of quota, key 2 overloaded twice; model b
-      # starts from key 2 (carried over) and moves to key 1 on its quota.
-      expect(calls).to eq(%w[gemini-a@0/1 gemini-a@0/2 gemini-a@30/2 gemini-b@30/2 gemini-b@30/1])
-    end
-
-    it 'starts the next request of the stage from the key that answered' do
-      run(script: {'gemini-a' => [daily_quota_error, 'first']})
-      _, calls = run(script: {'gemini-a' => ['second']})
-
-      expect(calls).to eq(%w[gemini-a@0/2])
     end
   end
 

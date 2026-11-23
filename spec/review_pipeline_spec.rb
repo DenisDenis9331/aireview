@@ -35,7 +35,7 @@ RSpec.describe Aireview::ReviewPipeline do
   end
 
   let(:reviewer) do
-    instance_double('Aireview::Reviewer', models: {}, fallback_models: {}, answered_model: nil, exclude_answered_model: nil,
+    instance_double('Aireview::Reviewer', models: {}, answered_model: nil, exclude_answered_model: nil,
                                           finish_reason: nil, critique_weaker?: false)
   end
   let(:logger) { Logger.new(nil) }
@@ -668,19 +668,19 @@ RSpec.describe Aireview::ReviewPipeline do
     expect(reviewer).to have_received(:exclude_answered_model).with(stage: 'generate', reason: /repair request does not fit/)
   end
 
-  it 'reports the fallback model used by a stage and lists reserves in dry-run output' do
+  it 'reports the model used by a stage and lists reserves in dry-run output' do
     allow(config).to receive(:fallback_names).with('generate').and_return(['gemini/g2'])
-    allow(config).to receive(:api_key_counts).with(['generate']).and_return('gemini' => 2)
+    allow(config).to receive(:api_key_counts).with(['generate']).and_return('gemini' => 1)
     allow(reviewer).to receive(:generate).and_return(generate_result([]))
-    allow(reviewer).to receive(:fallback_models).and_return('generate' => 'gemini/g2')
+    allow(reviewer).to receive(:models).and_return('generate' => 'gemini/g2')
 
     result = pipeline.run(merge_request: merge_request, changes: changes, critique: false)
     dry_run = pipeline.dry_run_prompts(merge_request: merge_request, changes: changes, critique: false)
 
-    expect(result).to include('Fallback model used: generate — gemini/g2.')
+    expect(result).to include('Models: generate — gemini/g2.')
     expect(dry_run[:generate_fallbacks]).to eq(['gemini/g2'])
     expect(dry_run[:critique_fallbacks]).to eq([])
-    expect(dry_run[:api_keys]).to eq('gemini' => 2)
+    expect(dry_run[:api_keys]).to eq('gemini' => 1)
     expect(dry_run[:time_budget]).to eq(1_800)
     expect(dry_run[:overloaded_quarantine]).to eq(120)
   end

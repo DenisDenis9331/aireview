@@ -38,12 +38,6 @@ module Aireview
       'anthropic' => 'ANTHROPIC_API_KEY',
       'openrouter' => 'OPENROUTER_API_KEY'
     }.freeze
-    PROVIDER_KEYS_MAPPING = {
-      'gemini' => 'GEMINI_API_KEYS',
-      'openai' => 'OPENAI_API_KEYS',
-      'anthropic' => 'ANTHROPIC_API_KEYS',
-      'openrouter' => 'OPENROUTER_API_KEYS'
-    }.freeze
     CONTEXT_ENV = {
       'max_diff_chars' => 'MAX_DIFF_CHARS',
       'max_mr_description_chars' => 'MAX_MR_DESCRIPTION_CHARS',
@@ -83,7 +77,7 @@ module Aireview
         LLM_STAGE_ENV_SUFFIXES.map { |suffix| "LLM_#{stage.upcase}_#{suffix}" }
       end
       [
-        *ENV_MAPPING.values, *PROVIDER_KEY_MAPPING.values, *PROVIDER_KEYS_MAPPING.values, 'LLM_API_KEY',
+        *ENV_MAPPING.values, *PROVIDER_KEY_MAPPING.values, 'LLM_API_KEY',
         *LLM_ENV, *stage_env, *CONTEXT_ENV.values
       ].uniq
     end
@@ -155,7 +149,6 @@ module Aireview
         .merge('llm' => Aireview::Utils.deep_merge(llm_env_config(env), pool_env_config(env)))
         .merge(context_env_config(env))
         .merge(provider_key_env_config(env))
-        .merge(provider_keys_env_config(env))
         .merge(generic_api_key_env_config(env))
     end
 
@@ -242,13 +235,6 @@ module Aireview
       PROVIDER_KEY_MAPPING.each_with_object({}) do |(provider, env_key), config|
         value = env[env_key]
         config["#{provider}_api_key"] = value unless Aireview::Utils.blank?(value)
-      end
-    end
-
-    def provider_keys_env_config(env)
-      PROVIDER_KEYS_MAPPING.each_with_object({}) do |(provider, env_key), config|
-        keys = env[env_key].to_s.split(',').map(&:strip).reject(&:empty?)
-        config["#{provider}_api_keys"] = keys unless keys.empty?
       end
     end
 

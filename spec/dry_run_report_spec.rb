@@ -19,7 +19,7 @@ RSpec.describe Aireview::DryRunReport do
       },
       config_paths: {'image defaults' => '/app/config/defaults.yml', '.aireview.yml' => '/repo/.aireview.yml'},
       warnings: [],
-      api_keys: {'gemini' => 2},
+      api_keys: {'gemini' => 1},
       time_budget: 1800,
       coverage: Aireview::ContextBudget::Coverage.empty,
       sizes: {sections: 10, diff: 20, diff_budget: 100, hunks_shown: 1, hunks_total: 1, stages: {}}
@@ -50,7 +50,7 @@ RSpec.describe Aireview::DryRunReport do
       Generate: gemini-3.7-flash temperature=0.1 (model from image defaults, provider from image defaults)
         fallbacks: gemini/gemini-3.6-flash -> gemini/gemini-3.5-flash (fallbacks from image defaults)
       Critique: gemini-3.8-flash temperature=0 (model from .aireview.yml, provider from env)
-      API keys: gemini 2
+      API keys: gemini 1
       Time budget: 1800s
     TEXT
   end
@@ -68,7 +68,7 @@ RSpec.describe Aireview::DryRunReport do
       Generate: gemini-3.7-flash temperature=0.1
         fallbacks: gemini/gemini-3.6-flash -> gemini/gemini-3.5-flash
       Critique: disabled
-      API keys: gemini 2
+      API keys: gemini 1
       Time budget: 1800s
     TEXT
   end

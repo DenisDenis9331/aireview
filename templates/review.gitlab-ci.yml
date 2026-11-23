@@ -8,7 +8,7 @@
 #
 # Models, timeouts and the report language come from config/defaults.yml
 # inside the image; project rules come from .aireview.yml in the repository
-# root, if there is one. Secrets (AIREVIEW_GITLAB_TOKEN, GEMINI_API_KEYS and
+# root, if there is one. Secrets (AIREVIEW_GITLAB_TOKEN, GEMINI_API_KEY and
 # the keys of other providers, JEV_API_KEY) and the proxy address are CI/CD
 # variables of the project: group variables are readable by any merge request
 # of any project in the group (see README, "Access to secrets").
@@ -70,13 +70,9 @@ aireview:
        -e REVIEW_MODE
        -e REVIEW_LANGUAGE
        -e GEMINI_API_KEY
-       -e GEMINI_API_KEYS
        -e OPENAI_API_KEY
-       -e OPENAI_API_KEYS
        -e ANTHROPIC_API_KEY
-       -e ANTHROPIC_API_KEYS
        -e OPENROUTER_API_KEY
-       -e OPENROUTER_API_KEYS
        -e LLM_API_KEY
        -e LLM_API_BASE
        -e OLLAMA_API_BASE

@@ -374,7 +374,7 @@ module Aireview
         options[:no_critique] = true
       end
 
-      parser.on('--no-fallbacks', 'Use only the primary model and the first API key of each stage') do
+      parser.on('--no-fallbacks', 'Use only the primary model of each stage') do
         options[:no_fallbacks] = true
       end
     end
@@ -451,7 +451,7 @@ module Aireview
           --no-jira        Disable Jira enrichment
           --dry-run        Print prompts without LLM calls
           --no-critique    Skip second LLM critique pass
-          --no-fallbacks   Use only the primary model and the first API key of each stage
+          --no-fallbacks   Use only the primary model of each stage
           --verbose        Enable verbose logging
           -h, --help       Show help
       HELP

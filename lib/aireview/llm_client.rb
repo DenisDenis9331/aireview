@@ -35,10 +35,10 @@ module Aireview
 
     # Returns the RubyLLM answer; read it with LlmClient.content. A request
     # error is re-raised as is — LlmFailure classifies it.
-    def request(prompt, candidate:, key:, timeout:, key_index: 0)
+    def request(prompt, candidate:, key:, timeout:)
       stage = prompt.stage.to_s
       model = candidate.model
-      chat = prepare(prompt, candidate: candidate, key: key, key_index: key_index)
+      chat = prepare(prompt, candidate: candidate, key: key)
       @logger.info("LLM #{stage} request started (model=#{model}, temperature=#{chat.temperature || 'model default'})")
       response = Timeout.timeout(timeout) { chat.ask(prompt.user) }
       @logger.info("LLM #{stage} request completed (model=#{model}#{token_counts(response)})")
@@ -51,10 +51,10 @@ module Aireview
     # The request as it will go, without sending it: the chat with the model,
     # key, schema, instructions and temperature set. chat.render builds it —
     # that is how the specs check the real request without the network.
-    def prepare(prompt, candidate:, key:, key_index: 0)
+    def prepare(prompt, candidate:, key:)
       load_ruby_llm
       stage = prompt.stage.to_s
-      chat = build_chat(context: context(stage, candidate, key, key_index), stage: stage,
+      chat = build_chat(context: context(stage, candidate, key), stage: stage,
                         model: candidate.model, provider: candidate.provider)
       chat = configure_reasoning(chat: chat, model: candidate.model, provider: candidate.provider)
         .with_temperature(temperature_for(chat, prompt, candidate))
@@ -126,11 +126,10 @@ module Aireview
       context.chat(model: model, provider: provider.to_sym, assume_model_exists: true)
     end
 
-    # A RubyLLM context per stage, key source (a provider's API or a server
-    # of your own) and key index: switching the key is another context, not
-    # an edit of the global config.
-    def context(stage, candidate, key, key_index)
-      @contexts[[stage, candidate.key_source, key_index]] ||= build_context(candidate, key)
+    # A RubyLLM context per stage and key source (a provider's API or a server
+    # of your own): isolated from the global config.
+    def context(stage, candidate, key)
+      @contexts[[stage, candidate.key_source]] ||= build_context(candidate, key)
     end
 
     def build_context(candidate, api_key)

@@ -4,21 +4,19 @@ require_relative 'llm_failure'
 require_relative 'model_state'
 
 module Aireview
-  # Walks the models and keys of a stage. An overload is a property of the
-  # model, a quota is a property of "key + model", so a 503 switches the
-  # model and a quota switches the key. An overloaded model goes into
-  # quarantine and is skipped until it expires; once the chain has been
-  # walked, the walk goes round again over the models whose quarantine has
-  # expired. Two limits: the time budget of the run and the number of
-  # requests sent per model per stage (ModelState).
+  # Walks the models of a stage. An overloaded model goes into quarantine and
+  # is skipped until it expires; once the chain has been walked, the walk goes
+  # round again over the models whose quarantine has expired. Two limits: the
+  # time budget of the run and the number of requests sent per model per stage
+  # (ModelState).
   class LlmRouter # rubocop:disable Metrics/ClassLength
-    Route = Struct.new(:candidate, :candidate_index, :key, :key_index, :key_count, keyword_init: true) do
+    Route = Struct.new(:candidate, :candidate_index, :key, keyword_init: true) do
       def fallback?
         candidate_index.positive?
       end
 
       def to_s
-        key_count > 1 ? "#{candidate} (key #{key_index + 1}/#{key_count})" : candidate.to_s
+        candidate.to_s
       end
     end
 
@@ -32,8 +30,6 @@ module Aireview
     end
 
     Slot = Struct.new(:candidate, :index)
-    # The key the next model of the same provider continues from.
-    Carry = Struct.new(:key_source, :key_index)
     Delay = Struct.new(:seconds, :source)
 
     SWITCH_HINT = 'Try again later or switch model via --generate-model/--critique-model.'
@@ -73,34 +69,27 @@ module Aireview
 
     # The block receives a route and a request timeout, makes the request and
     # returns the answer. An error raised by the block is classified, then
-    # comes a retry, another key, another model, or ApiError once the routes
-    # are exhausted. pinned — only the model that answered last in this
-    # stage (the JSON repair): its failure is RouteExhaustedError, and the
-    # stage restarts on another model.
+    # comes a retry, another model, or ApiError once the routes are
+    # exhausted. pinned — only the model that answered last in this stage
+    # (the JSON repair): its failure is RouteExhaustedError, and the stage
+    # restarts on another model.
     def call(stage:, request_chars:, pinned: false, &request)
       @deadline ||= now + @config.llm_time_budget
       visits = []
       noted = Set.new
-      carry = nil
       loop do
         slots = available_slots(stage, request_chars, pinned, visits, noted)
         slot = slots.empty? ? nil : ready_slot(stage, slots, visits)
         raise exhausted_error(stage, visits, pinned) unless slot
 
-        status, value = try_candidate(stage, slot, visits, carry, &request)
+        status, value = try_candidate(stage, slot, visits, &request)
         return value if status == :ok
-
-        carry = value
       end
     end
 
-    # Stages answered by a model other than the primary one, for the report.
+    # Stages answered by any model, for the report.
     def models
       @used.transform_values { |route| route.candidate.display_name }
-    end
-
-    def fallback_models
-      @used.select { |_, route| route.fallback? }.transform_values { |route| route.candidate.display_name }
     end
 
     # The model that answered last in the stage and its place in the chain.
@@ -165,7 +154,7 @@ module Aireview
     end
 
     def bare_route(candidate, index)
-      Route.new(candidate: candidate, candidate_index: index, key_count: 1)
+      Route.new(candidate: candidate, candidate_index: index)
     end
 
     def skip_reason(stage, candidate, request_chars)
@@ -232,48 +221,16 @@ module Aireview
       generate if @routing.ranked_critique?(generate)
     end
 
-    # On :next_model hands over the current key: an overload is a property of
-    # the model, and the next model of the same provider continues from the
-    # same key instead of going back to the first one, whose quota may
-    # already be gone.
-    #
     # Every visit either sends a request or excludes the model: otherwise the
-    # walk round the pool would never stop. A model whose keys are all out of
-    # daily quota is excluded until the end of the run.
-    def try_candidate(stage, slot, visits, carry, &)
-      routes = candidate_routes(stage, slot, carry)
-      tried = false
-      routes.each do |route|
-        next if quota_exhausted?(stage, route, visits)
+    # walk round the pool would never stop.
+    def try_candidate(stage, slot, visits, &)
+      key = @config.candidate_api_keys(slot.candidate).first
+      route = Route.new(candidate: slot.candidate, candidate_index: slot.index, key: key)
+      log_switch(stage, route, visits)
+      status, response = try_route(stage, route, visits, &)
+      return [:ok, remember(stage, route, response)] if status == :ok
 
-        tried = true
-        log_switch(stage, route, visits)
-        status, response = try_route(stage, route, visits, &)
-        return [:ok, remember(stage, route, response)] if status == :ok
-        return [:next_model, Carry.new(route.candidate.key_source, route.key_index)] if status == :next_model
-      end
-      state(slot.candidate).exclude('daily quota exhausted on every key') unless tried
-      [:next_model, carry]
-    end
-
-    # The keys start from the carried one (after an overload — the current
-    # key, after an answer — the one that answered), the rest follow: a quota
-    # is bound to "key + model", a failure on one model does not write the
-    # key off for another.
-    def candidate_routes(stage, slot, carry)
-      keys = @config.candidate_api_keys(slot.candidate)
-      routes = keys.each_with_index.map do |key, key_index|
-        Route.new(candidate: slot.candidate, candidate_index: slot.index, key: key,
-                  key_index: key_index, key_count: keys.size)
-      end
-      routes.rotate(start_key(stage, slot, carry))
-    end
-
-    def start_key(stage, slot, carry)
-      return carry.key_index if carry && carry.key_source == slot.candidate.key_source
-
-      cursor_candidate, cursor_key = @cursor.fetch(stage, [0, 0])
-      cursor_candidate == slot.index ? cursor_key : 0
+      [:next_model, nil]
     end
 
     # A visit to a route: requests until an answer, a retry or a refusal. try
@@ -309,7 +266,7 @@ module Aireview
       if decision == :retry
         return :retry if requests_left?(stage, route) && waited_before_retry?(stage, route, delay)
 
-        decision = give_up(kind)
+        decision = :next_model
       end
       record_failure(stage, route, kind, decision, error)
       visits << Visit.new(route: route, kind: kind, tries: try, error: error)
@@ -323,29 +280,23 @@ module Aireview
       false
     end
 
-    # :retry with a delay, :next_key, :next_model or :fail.
+    # :retry with a delay, :next_model or :fail.
     def decide(kind, try, error)
       case kind
       when :fatal then [:fail]
-      when :unavailable then [:next_model]
-      when :daily_quota then [:next_key]
-      when :rate_limit then try == 1 ? [:retry, rate_limit_delay(error)] : [:next_key]
+      when :unavailable, :daily_quota then [:next_model]
+      when :rate_limit then try == 1 ? [:retry, rate_limit_delay(error)] : [:next_model]
       else try == 1 ? [:retry, short_delay] : [:next_model]
       end
     end
 
-    def give_up(kind)
-      kind == :rate_limit ? :next_key : :next_model
-    end
-
-    # A daily quota marks the key of the model, a missing model marks the
-    # model for the whole run, an overload or a timeout quarantines it, a
-    # per-minute limit quarantines it for the provider's hint (the next key
-    # is tried at once; the quarantine only affects the next visit).
+    # A daily quota or a missing model excludes the model for the whole run,
+    # an overload or a timeout quarantines it, a per-minute limit quarantines
+    # it for the provider's hint.
     def record_failure(stage, route, kind, decision, error)
       model = state(route.candidate)
       case kind
-      when :daily_quota then model.exhaust_key(route.key_index)
+      when :daily_quota then model.exclude('daily quota exhausted earlier in this run')
       when :unavailable then model.exclude('model unavailable earlier in this run')
       when :rate_limit then quarantine(stage, route, rate_limit_delay(error).seconds)
       when :overloaded, :timeout then quarantine(stage, route, @config.overloaded_quarantine) if decision == :next_model
@@ -405,18 +356,9 @@ module Aireview
       [@config.llm_timeout.to_f, remaining_time].min
     end
 
-    def quota_exhausted?(stage, route, visits)
-      return false unless state(route.candidate).key_exhausted?(route.key_index)
-
-      @logger.info("LLM #{stage}: skipping #{route}, daily quota exhausted earlier in this run")
-      visits << Visit.new(route: route, note: 'daily quota exhausted earlier in this run')
-      true
-    end
-
-    # A model that answered is not overloaded, whichever key answered: a
-    # quarantine set through another key of the same model is lifted.
+    # A model that answered is not overloaded: its quarantine is lifted.
     def remember(stage, route, response)
-      @cursor[stage] = [route.candidate_index, route.key_index]
+      @cursor[stage] = route.candidate_index
       @used[stage] = route
       state(route.candidate).lift_quarantine
       response
@@ -433,7 +375,7 @@ module Aireview
     # The next request of the stage (the JSON repair, for instance) starts
     # from the model that answered; the rest stay in reserve after it.
     def ordered_chain(stage)
-      start_candidate, = @cursor.fetch(stage, [0, 0])
+      start_candidate = @cursor.fetch(stage, 0)
       chain_for(stage).each_with_index.to_a.rotate(start_candidate)
     end
 

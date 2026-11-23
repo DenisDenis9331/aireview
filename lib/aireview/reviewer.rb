@@ -38,11 +38,6 @@ module Aireview
       @router.models
     end
 
-    # Stages answered by a fallback model, for the report line.
-    def fallback_models
-      @router.fallback_models
-    end
-
     # The model that answered last in the stage with its place in the chain, for the log.
     def answered_model(stage)
       @router.answered(stage)
@@ -72,8 +67,7 @@ module Aireview
     def call_llm(prompt, pinned:)
       @finish_reasons.delete(prompt.stage)
       response = @router.call(stage: prompt.stage, request_chars: prompt.chars, pinned: pinned) do |route, timeout|
-        @client.request(prompt, candidate: route.candidate, key: route.key, key_index: route.key_index,
-                                timeout: timeout)
+        @client.request(prompt, candidate: route.candidate, key: route.key, timeout: timeout)
       end
       @finish_reasons[prompt.stage] = response.finish_reason
       LlmClient.content(response)
