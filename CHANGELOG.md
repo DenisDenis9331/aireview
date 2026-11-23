@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.3.0
 
 - The report always shows a `Models: generate — …, critique — …` line with the
   models that answered each stage (without `api_base`, and with `skipped (no
