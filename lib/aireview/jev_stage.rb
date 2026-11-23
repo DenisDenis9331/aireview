@@ -37,11 +37,27 @@ module Aireview
       accepted = drop_duplicates(in_generate_order(accepted, candidates), result.answers)
       @logger.info("Pipeline critique pass completed with #{accepted.size} kept candidate(s) (engine=jev, " \
                    "model=#{result.model}, requests=#{result.requests})")
-      Outcome.new(accepted: accepted, note: unverifiable.empty? || fail? ? :jev : :jev_partial,
-                  model: "jev/#{result.model}")
+      Outcome.new(accepted: accepted, note: outcome_note(unverifiable, candidates, result.model),
+                  model: outcome_model(result.model))
     end
 
     private
+
+    def outcome_note(unverifiable, candidates, answered_model)
+      if unverifiable.empty? || fail?
+        Aireview::Utils.present?(answered_model) ? :jev : nil
+      elsif unverifiable.size == candidates.size && Aireview::Utils.blank?(answered_model)
+        :jev_failed
+      else
+        :jev_partial
+      end
+    end
+
+    def outcome_model(answered_model)
+      return "jev/#{answered_model}" if Aireview::Utils.present?(answered_model)
+
+      :critique_no_verdicts if fail?
+    end
 
     def fail?
       @config.jev_fallback == 'fail'

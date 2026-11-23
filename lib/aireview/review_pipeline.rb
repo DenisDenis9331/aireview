@@ -155,8 +155,12 @@ module Aireview
       )
       llm_critique = ->(subset) { critique_candidates(context: context, candidates: subset) }
       outcome = @jev_stage.run(context: context, candidates: candidates, llm_critique: llm_critique)
-      critique_model = [outcome.model, @reviewer.models['critique']].compact.join(' + ')
-      [outcome.accepted, outcome.note, Aireview::Utils.presence(critique_model)]
+      critique_model = if outcome.model.is_a?(Symbol)
+                         outcome.model
+                       else
+                         Aireview::Utils.presence([outcome.model, @reviewer.models['critique']].compact.join(' + '))
+                       end
+      [outcome.accepted, outcome.note, critique_model]
     end
 
     def critique_candidates(context:, candidates:)
