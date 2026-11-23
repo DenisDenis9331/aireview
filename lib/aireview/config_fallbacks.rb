@@ -7,10 +7,9 @@ require_relative 'stage_chains'
 require_relative 'model_pool'
 
 module Aireview
-  # Reserves for when the primary model is down or a key is out of quota:
-  # the routing plan (see StageChains and ModelPool) and the list of keys
-  # per provider. Models are set in .aireview.yml or the environment, keys
-  # only in the environment.
+  # Reserves for when the primary model is down: the routing plan (see
+  # StageChains and ModelPool) and the key per provider. Models are set in
+  # .aireview.yml or the environment, keys only in the environment.
   module ConfigFallbacks
     KEYLESS_PROVIDERS = %w[ollama].freeze
     DEFAULT_TIME_BUDGET = 1_800
@@ -27,7 +26,7 @@ module Aireview
       routing.chain(stage)
     end
 
-    # The keys a model is called with. A server of your own (a model with
+    # The key a model is called with. A server of your own (a model with
     # api_base) never gets the provider's key — OPENAI_API_KEY must not leave
     # for a self-hosted server — but LLM_API_KEY, or a placeholder for a
     # server without auth, since the client wants some key.
@@ -40,15 +39,13 @@ module Aireview
       [Aireview::Utils.presence(llm_api_key) || SELF_HOSTED_PLACEHOLDER_KEY]
     end
 
-    # Keys in order of preference; a single nil for a keyless provider, so
-    # that walking the chain does not depend on the provider.
+    # The provider's key; a single nil for a keyless provider, so that
+    # walking the chain does not depend on the provider.
     def provider_api_keys(provider)
       provider = provider.to_s
       return [nil] if KEYLESS_PROVIDERS.include?(provider)
 
-      keys = Array(@data["#{provider}_api_keys"]).compact
-      keys = [provider_api_key(provider)].compact if keys.empty?
-      fallbacks_disabled? ? keys.first(1) : keys
+      [provider_api_key(provider)].compact
     end
 
     def fallbacks_disabled?
@@ -59,7 +56,7 @@ module Aireview
       stage_chain(stage).drop(1).map(&:to_s)
     end
 
-    # Only the number of keys per provider, for --dry-run; the values never
+    # Whether a key is present per provider, for --dry-run; the values never
     # leave. Servers of your own are not counted: they take LLM_API_KEY.
     def api_key_counts(stages)
       providers = stages.flat_map { |stage| stage_chain(stage).reject(&:api_base).map(&:provider) }.uniq

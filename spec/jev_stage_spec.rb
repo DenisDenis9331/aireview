@@ -28,10 +28,10 @@ RSpec.describe Aireview::JevStage do
     Aireview::JevCritic::Assessment.new(id: id, decision: decision, reason: reason, answers: {real_issue: 0.9})
   end
 
-  def jev_decides(decisions, answers = {})
+  def jev_decides(decisions, answers = {}, model: 'jev-1.13.0')
     result = Aireview::JevCritic::Result.new(
       assessments: decisions.map { |id, decision| assessment(id, decision) },
-      answers: answers, requests: 1, model: 'jev-1.13.0'
+      answers: answers, requests: model ? 1 : 0, model: model
     )
     allow(critic).to receive(:assess).with(context: :context, candidates: candidates, dedupe: false)
                                      .and_return(result)
@@ -48,6 +48,7 @@ RSpec.describe Aireview::JevStage do
 
     expect(outcome.accepted).to eq([candidates[0], candidates[2]])
     expect(outcome.note).to eq(:jev)
+    expect(outcome.model).to eq('jev/jev-1.13.0')
     expect(llm_calls).to be_empty
     expect(log.string).to include('Critique (jev) reject C2: reject (real_issue=0.9)')
   end
@@ -86,6 +87,16 @@ RSpec.describe Aireview::JevStage do
     expect(log.string).to include('Jev critique failed, the LLM critique takes over')
   end
 
+  it 'reports no Jev model when Jev returned no verdicts and every candidate went to the LLM' do
+    jev_decides({'C1' => :unverifiable, 'C2' => :unverifiable, 'C3' => :unverifiable}, model: nil)
+
+    outcome = run
+
+    expect(llm_calls).to eq([%w[C1 C2 C3]])
+    expect(outcome.model).to be_nil
+    expect(outcome.note).to eq(:jev_failed)
+  end
+
   context 'with llm.jev.fallback: fail' do
     let(:fallback) { 'fail' }
 
@@ -96,8 +107,19 @@ RSpec.describe Aireview::JevStage do
 
       expect(outcome.accepted).to eq([candidates[0]])
       expect(outcome.note).to eq(:jev)
+      expect(outcome.model).to eq('jev/jev-1.13.0')
       expect(llm_calls).to be_empty
       expect(log.string).to include('Critique reject C2, C3: Jev could not judge them and llm.jev.fallback is fail')
+    end
+
+    it 'reports critique_no_verdicts and no Jev note when Jev returned no verdicts at all' do
+      jev_decides({'C1' => :unverifiable, 'C2' => :unverifiable, 'C3' => :unverifiable}, model: nil)
+
+      outcome = run
+
+      expect(outcome.accepted).to be_empty
+      expect(outcome.note).to be_nil
+      expect(outcome.model).to eq(:critique_no_verdicts)
     end
 
     it 'fails the run when Jev fails' do

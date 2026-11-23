@@ -48,12 +48,11 @@ RSpec.describe Aireview::ModelChecker do
   end
 
   # The client answers by a script; the check is that the checker sends the
-  # production prompts with the production schemas, the provider's first key
+  # production prompts with the production schemas, the provider's key
   # and the config timeout.
   def stub_probe(answers)
-    allow(client).to receive(:request) do |prompt, candidate:, key:, timeout:, key_index: 0|
+    allow(client).to receive(:request) do |prompt, candidate:, key:, timeout:|
       expect(key).to eq(candidate.provider == 'ollama' ? nil : 'key-one')
-      expect(key_index).to eq(0)
       expect(timeout).to eq(60.0)
       expect(prompt.temperature).to eq(0)
       expect(prompt.schema).to eq(prompt.stage == 'critique' ? Aireview::CritiqueOutputSchema : Aireview::GenerateOutputSchema)

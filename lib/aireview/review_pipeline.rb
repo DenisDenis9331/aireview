@@ -69,11 +69,11 @@ module Aireview
                    "(model=#{@reviewer.answered_model('generate')})")
       candidates = check_candidates(context: context, changes: changes, candidates: candidates)
 
-      accepted, jev_note = if critique
-                             maybe_critique(context: context, candidates: candidates)
-                           else
-                             skip_critique(candidates)
-                           end
+      accepted, jev_note, critique_model = if critique
+                                             maybe_critique(context: context, candidates: candidates)
+                                           else
+                                             skip_critique(candidates, status: :critique_disabled)
+                                           end
 
       @logger.info("Pipeline finished with #{accepted.size} accepted finding(s)")
 
@@ -81,8 +81,7 @@ module Aireview
         accepted,
         summary: summary,
         coverage: context.coverage,
-        models: @reviewer.models,
-        fallback_models: @reviewer.fallback_models,
+        models: report_models(critique_model),
         critique_weaker: critique && @reviewer.critique_weaker?,
         jev_note: jev_note
       )
@@ -95,6 +94,12 @@ module Aireview
     end
 
     private
+
+    def report_models(critique_model)
+      models = @reviewer.models.dup
+      models['critique'] = critique_model if critique_model && !models.empty?
+      models
+    end
 
     # A stage is a request, parsing and one repair by the same model. An
     # invalid result after the repair, like a repair with no requests left,
@@ -125,22 +130,22 @@ module Aireview
       ).check(candidates)
     end
 
-    # Returns the candidates and no report note, like every critique path.
-    def skip_critique(candidates, reason = nil)
+    # Returns the candidates, no report note and the critique status, like every critique path.
+    def skip_critique(candidates, reason = nil, status:)
       @logger.info(['Pipeline critique pass skipped', reason].compact.join(': '))
-      [candidates, nil]
+      [candidates, nil, status]
     end
 
     # Critique has nothing to filter without candidates: the LLM request
-    # would waste quota and time. Returns [accepted, note for the report].
+    # would waste quota and time. Returns [accepted, note for the report, critique model/status].
     def maybe_critique(context:, candidates:)
-      return skip_critique(candidates, 'no candidates') if candidates.empty?
+      return skip_critique(candidates, 'no candidates', status: :critique_no_candidates) if candidates.empty?
       return jev_critique(context: context, candidates: candidates) if @config.jev_critique?
 
       @logger.info("Pipeline critique pass started (model=#{@config.critique_model})")
       accepted = critique_candidates(context: context, candidates: candidates)
       @jev_shadow.run(context: context, candidates: candidates, accepted: accepted) if @config.jev_shadow?
-      [accepted, nil]
+      [accepted, nil, @reviewer.models['critique']]
     end
 
     def jev_critique(context:, candidates:)
@@ -150,7 +155,12 @@ module Aireview
       )
       llm_critique = ->(subset) { critique_candidates(context: context, candidates: subset) }
       outcome = @jev_stage.run(context: context, candidates: candidates, llm_critique: llm_critique)
-      [outcome.accepted, outcome.note]
+      critique_model = if outcome.model.is_a?(Symbol)
+                         outcome.model
+                       else
+                         Aireview::Utils.presence([outcome.model, @reviewer.models['critique']].compact.join(' + '))
+                       end
+      [outcome.accepted, outcome.note, critique_model]
     end
 
     def critique_candidates(context:, candidates:)

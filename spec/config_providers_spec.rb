@@ -15,19 +15,18 @@ RSpec.describe 'Config with several providers' do
   end
 
   let(:keys) do
-    {'GEMINI_API_KEY' => 'g', 'OPENAI_API_KEYS' => 'o1,o2', 'ANTHROPIC_API_KEY' => 'a', 'OPENROUTER_API_KEY' => 'r'}
+    {'GEMINI_API_KEY' => 'g', 'OPENAI_API_KEY' => 'o1', 'ANTHROPIC_API_KEY' => 'a', 'OPENROUTER_API_KEY' => 'r'}
   end
   let(:mixed) { 'anthropic/claude-opus-4.5,openai/gpt-5,gemini/gemini-3.8-flash,openrouter/qwen/qwen3-coder' }
 
-  it 'reads the keys of every provider from its own variables' do
+  it 'reads the key of every provider from its own variable' do
     config = load(env: keys)
 
     expect(config.provider_api_keys('gemini')).to eq(['g'])
-    expect(config.provider_api_keys('openai')).to eq(%w[o1 o2])
+    expect(config.provider_api_keys('openai')).to eq(['o1'])
     expect(config.provider_api_keys('anthropic')).to eq(['a'])
     expect(config.provider_api_keys('openrouter')).to eq(['r'])
-    expect(Aireview::Config.env_names).to include('OPENAI_API_KEY', 'OPENAI_API_KEYS', 'ANTHROPIC_API_KEY',
-                                                  'ANTHROPIC_API_KEYS', 'OPENROUTER_API_KEY', 'OPENROUTER_API_KEYS')
+    expect(Aireview::Config.env_names).to include('OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY')
   end
 
   it 'orders a mixed pool as written, the provider named in front of each model' do

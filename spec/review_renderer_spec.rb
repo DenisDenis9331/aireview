@@ -103,22 +103,25 @@ RSpec.describe Aireview::ReviewRenderer do
     expect(described_class.new.render([finding], summary: 'x')).not_to include('Jev')
   end
 
-  it 'names the stages that answered with a fallback model' do
-    result = described_class.new.render([], summary: 'x', fallback_models: {'critique' => 'gemini/gemini-3.7-flash'})
-
-    expect(result).to include("ok\n\nFallback model used: critique — gemini/gemini-3.7-flash.\n\nThis report was generated")
-    expect(described_class.new.render([], summary: 'x', fallback_models: {})).not_to include('Fallback model')
-    expect(described_class.new(language: 'ru').render([], summary: 'x', fallback_models: {'critique' => 'm'}))
-      .to include('Использована резервная модель: critique — m.')
-  end
-
   it 'names the models that answered each stage in the report language' do
     used = {'generate' => 'gemini/gemini-3.8-flash', 'critique' => 'gemini/gemini-4-hydrogen'}
 
     expect(described_class.new.render([], summary: 'x', models: used))
-      .to include('Models: generate — gemini/gemini-3.8-flash, critique — gemini/gemini-4-hydrogen.')
+      .to include("ok\n\nModels: generate — gemini/gemini-3.8-flash, critique — gemini/gemini-4-hydrogen.\n\nThis report was generated")
     expect(described_class.new(language: 'ru').render([], summary: 'x', models: used))
       .to include('Модели: generate — gemini/gemini-3.8-flash, critique — gemini/gemini-4-hydrogen.')
+    expect(described_class.new.render([], summary: 'x', models: {'generate' => 'g', 'critique' => :critique_no_candidates}))
+      .to include('Models: generate — g, critique — skipped (no candidates).')
+    expect(described_class.new(language: 'ru').render([], summary: 'x', models: {'generate' => 'g', 'critique' => :critique_no_candidates}))
+      .to include('Модели: generate — g, critique — пропущена (нет замечаний).')
+    expect(described_class.new.render([], summary: 'x', models: {'generate' => 'g', 'critique' => :critique_no_verdicts}))
+      .to include('Models: generate — g, critique — skipped (no verdicts).')
+    expect(described_class.new(language: 'ru').render([], summary: 'x', models: {'generate' => 'g', 'critique' => :critique_no_verdicts}))
+      .to include('Модели: generate — g, critique — пропущена (нет вердиктов).')
+    expect(described_class.new.render([], summary: 'x', models: {'generate' => 'g', 'critique' => :critique_disabled}))
+      .to include('Models: generate — g, critique — disabled.')
+    expect(described_class.new(language: 'ru').render([], summary: 'x', models: {'generate' => 'g', 'critique' => :critique_disabled}))
+      .to include('Модели: generate — g, critique — отключена.')
     expect(described_class.new.render([], summary: 'x', models: {})).not_to include('Models:')
   end
 

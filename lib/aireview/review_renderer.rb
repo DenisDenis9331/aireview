@@ -47,7 +47,9 @@ module Aireview
         diff_unavailable: 'diff not available',
         section_list: 'Truncated sections',
         models_used: 'Models',
-        fallback_used: 'Fallback model used',
+        critique_no_candidates: 'skipped (no candidates)',
+        critique_no_verdicts: 'skipped (no verdicts)',
+        critique_disabled: 'disabled',
         critique_weaker: 'Critique ran on a model weaker than Generate: the findings were checked less strictly.',
         jev: 'The findings were checked by Jev, a fast classifier, without refining their wording.',
         jev_partial: 'The findings were checked by Jev, a fast classifier, without refining their wording; ' \
@@ -80,7 +82,9 @@ module Aireview
         diff_unavailable: 'дифф недоступен',
         section_list: 'Усечённые секции',
         models_used: 'Модели',
-        fallback_used: 'Использована резервная модель',
+        critique_no_candidates: 'пропущена (нет замечаний)',
+        critique_no_verdicts: 'пропущена (нет вердиктов)',
+        critique_disabled: 'отключена',
         critique_weaker: 'Критика выполнена моделью слабее generate: замечания проверены менее строго.',
         jev: 'Замечания проверены быстрым классификатором Jev, без уточнения формулировок.',
         jev_partial: 'Замечания проверены быстрым классификатором Jev, без уточнения формулировок; ' \
@@ -100,7 +104,7 @@ module Aireview
     # checked".
     # jev_note — how Jev took part in the critique (see JevStage::Outcome).
     # The facts about the run are named one by one on purpose.
-    def render(accepted, summary:, coverage: nil, models: {}, fallback_models: {}, # rubocop:disable Metrics/ParameterLists
+    def render(accepted, summary:, coverage: nil, models: {}, # rubocop:disable Metrics/ParameterLists
                critique_weaker: false, jev_note: nil)
       mismatches, important = select_findings(Array(accepted))
       result = mismatches.empty? && important.empty? ? 'ok' : 'needs attention'
@@ -121,7 +125,7 @@ module Aireview
         ## #{label(:result)}
 
         #{result}#{partial_note(coverage)}
-        #{coverage_block(coverage)}#{models_note(models)}#{fallback_note(fallback_models)}#{weaker_note(critique_weaker)}#{jev_note(jev_note)}
+        #{coverage_block(coverage)}#{models_note(models)}#{weaker_note(critique_weaker)}#{jev_note(jev_note)}
         #{label(:disclaimer)}
       MARKDOWN
     end
@@ -207,8 +211,8 @@ module Aireview
       lines
     end
 
-    # A key switch stays in the logs; a model switch is visible to the
-    # reader, because a fallback model may review less well than the primary.
+    # A model switch is visible to the reader, because a fallback model may
+    # review less well than the primary.
     def weaker_note(critique_weaker)
       return '' unless critique_weaker
 
@@ -224,15 +228,11 @@ module Aireview
     def models_note(models)
       return '' if models.nil? || models.empty?
 
-      used = models.map { |stage, model| "#{stage} — #{model}" }.join(', ')
+      used = models.map do |stage, model|
+        text = model.is_a?(Symbol) ? label(model) : model
+        "#{stage} — #{text}"
+      end.join(', ')
       "\n#{label(:models_used)}: #{used}.\n"
-    end
-
-    def fallback_note(fallback_models)
-      return '' if fallback_models.nil? || fallback_models.empty?
-
-      used = fallback_models.map { |stage, model| "#{stage} — #{model}" }.join(', ')
-      "\n#{label(:fallback_used)}: #{used}.\n"
     end
 
     def location(finding)

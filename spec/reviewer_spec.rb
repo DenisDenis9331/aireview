@@ -49,8 +49,8 @@ RSpec.describe Aireview::Reviewer do
 
   # The client answers by a "model → answers" script; every call is recorded.
   def answers(script)
-    allow(client).to receive(:request) do |prompt, candidate:, key:, timeout:, key_index: 0|
-      requests << {stage: prompt.stage, model: candidate.model, key: key, key_index: key_index, timeout: timeout,
+    allow(client).to receive(:request) do |prompt, candidate:, key:, timeout:|
+      requests << {stage: prompt.stage, model: candidate.model, key: key, timeout: timeout,
                    temperature: prompt.temperature, schema: prompt.schema, system: prompt.system, user: prompt.user}
       answer = script.fetch(candidate.model).shift
       raise answer if answer.is_a?(Exception)
@@ -73,12 +73,12 @@ RSpec.describe Aireview::Reviewer do
     expect(reviewer.critique(system_prompt: 'cs', user_prompt: 'cu')).to eq('critique body')
 
     expect(requests).to eq([
-      {stage: 'generate', model: 'gemini-3.7-flash', key: 'key-one', key_index: 0, timeout: 60.0,
+      {stage: 'generate', model: 'gemini-3.7-flash', key: 'key-one', timeout: 60.0,
        temperature: 0.3, schema: Aireview::GenerateOutputSchema, system: 'gs', user: 'gu'},
-      {stage: 'critique', model: 'gemini-3.8-flash', key: 'key-one', key_index: 0, timeout: 60.0,
+      {stage: 'critique', model: 'gemini-3.8-flash', key: 'key-one', timeout: 60.0,
        temperature: 0, schema: Aireview::CritiqueOutputSchema, system: 'cs', user: 'cu'}
     ])
-    expect(reviewer.fallback_models).to eq({})
+    expect(reviewer.models).to eq('generate' => 'gemini/gemini-3.7-flash', 'critique' => 'gemini/gemini-3.8-flash')
     expect(reviewer.answered_model('generate')).to eq('gemini/gemini-3.7-flash (1/1)')
     expect(reviewer.critique_weaker?).to be(false)
   end
@@ -92,7 +92,7 @@ RSpec.describe Aireview::Reviewer do
       expect(reviewer.generate(system_prompt: 'gs', user_prompt: 'gu')).to eq('fallback body')
       expect(requests.map { |request| request[:model] }).to eq(%w[gemini-3.7-flash gemini-3.7-flash gemini-fallback])
       expect(sleeps).to eq([30.0])
-      expect(reviewer.fallback_models).to eq('generate' => 'gemini/gemini-fallback')
+      expect(reviewer.models).to eq('generate' => 'gemini/gemini-fallback')
       expect(reviewer.answered_model('generate')).to eq('gemini/gemini-fallback (2/2)')
       expect(log_output.string).to include(
         'LLM generate: switching to gemini/gemini-fallback after gemini/gemini-3.7-flash: overloaded after 2 attempt(s)'
@@ -106,19 +106,6 @@ RSpec.describe Aireview::Reviewer do
       expect(reviewer.exclude_answered_model(stage: 'generate', reason: 'invalid result'))
         .to eq(candidate('gemini-3.7-flash'))
       expect(reviewer.generate(system_prompt: 'gs', user_prompt: 'gu')).to eq('good json')
-    end
-  end
-
-  context 'with two keys' do
-    let(:gemini_keys) { %w[key-one key-two] }
-
-    it 'switches the key on a real daily quota response body without waiting' do
-      answers('gemini-3.7-flash' => [daily_quota_error, 'generate body'])
-
-      expect(reviewer.generate(system_prompt: 'gs', user_prompt: 'gu')).to eq('generate body')
-      expect(requests.map { |request| request.values_at(:key, :key_index) }).to eq([['key-one', 0], ['key-two', 1]])
-      expect(sleeps).to be_empty
-      expect(log_output.string).not_to include('key-one', 'key-two')
     end
   end
 

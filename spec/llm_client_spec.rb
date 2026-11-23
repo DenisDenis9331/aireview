@@ -113,15 +113,14 @@ RSpec.describe Aireview::LlmClient do
     expect(RubyLLM.config.gemini_api_key).to eq(global_key)
   end
 
-  it 'reuses the context of a stage, provider and key, and builds another for another key' do
+  it 'reuses the context of a stage and provider, and builds another for another stage' do
     request
     request
-    request(key: 'second-key', key_index: 1)
     client.request(prompt.dup.tap { |p| p.stage = 'critique' }, candidate: candidate('gemini', 'gemini-3.7-flash'),
                                                                 key: 'secret-key', timeout: 45.0)
 
-    expect(RubyLLM).to have_received(:context).exactly(3).times
-    expect(context_configs.map(&:gemini_api_key)).to eq(%w[secret-key second-key secret-key])
+    expect(RubyLLM).to have_received(:context).exactly(2).times
+    expect(context_configs.map(&:gemini_api_key)).to eq(%w[secret-key secret-key])
   end
 
   it 'retries a model unknown to the RubyLLM registry with an explicit provider' do

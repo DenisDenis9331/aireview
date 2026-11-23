@@ -34,7 +34,7 @@ module Aireview
 
     def stage_setting_layer(stage, key)
       stage = stage.to_s
-      @layers.reverse.find do |layer|
+      @layers.rfind do |layer|
         !Utils.dig(layer.data, 'llm', stage, key).nil? || !Utils.dig(layer.data, 'llm', key).nil?
       end
     end
@@ -97,7 +97,7 @@ module Aireview
     private
 
     def layer_of(*keys)
-      @layers.reverse.find { |layer| !Utils.dig(layer.data, *keys).nil? }
+      @layers.rfind { |layer| !Utils.dig(layer.data, *keys).nil? }
     end
 
     def inherited_fallback_names(stage)

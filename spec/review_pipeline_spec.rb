@@ -35,7 +35,7 @@ RSpec.describe Aireview::ReviewPipeline do
   end
 
   let(:reviewer) do
-    instance_double('Aireview::Reviewer', models: {}, fallback_models: {}, answered_model: nil, exclude_answered_model: nil,
+    instance_double('Aireview::Reviewer', models: {}, answered_model: nil, exclude_answered_model: nil,
                                           finish_reason: nil, critique_weaker?: false)
   end
   let(:logger) { Logger.new(nil) }
@@ -192,7 +192,8 @@ RSpec.describe Aireview::ReviewPipeline do
           @calls += 1
           subset = candidates.select { |candidate| @send_to_llm.include?(candidate['id']) }
           kept = subset.empty? ? [] : llm_critique.call(subset)
-          Aireview::JevStage::Outcome.new(accepted: @outcome.accepted + kept, note: @outcome.note)
+          Aireview::JevStage::Outcome.new(accepted: @outcome.accepted + kept, note: @outcome.note,
+                                          model: @outcome.model)
         end
       end
     end
@@ -210,21 +211,25 @@ RSpec.describe Aireview::ReviewPipeline do
 
     it 'renders what Jev kept with the Jev note, without the LLM critique and the shadow' do
       kept = JSON.parse(JSON.generate(candidates.first))
-      stage = stage_class.new(Aireview::JevStage::Outcome.new(accepted: [kept], note: :jev))
+      stage = stage_class.new(Aireview::JevStage::Outcome.new(accepted: [kept], note: :jev, model: 'jev/jev-1.13.0'))
+      allow(reviewer).to receive(:models).and_return('generate' => 'gemini/g1')
       allow(reviewer).to receive(:critique)
 
       result = jev_pipeline(stage).run(merge_request: merge_request, changes: changes)
 
       expect(result).to include('Tax is no longer included')
       expect(result).not_to include('Jira requires discounts')
+      expect(result).to include('Models: generate — gemini/g1, critique — jev/jev-1.13.0.')
       expect(result).to include('The findings were checked by Jev, a fast classifier, without refining their wording.')
       expect(reviewer).not_to have_received(:critique)
       expect(jev_shadow).not_to have_received(:run)
     end
 
     it 'gives the LLM critique only the candidates Jev passes on' do
-      stage = stage_class.new(Aireview::JevStage::Outcome.new(accepted: [], note: :jev_partial), send_to_llm: %w[C2])
+      stage = stage_class.new(Aireview::JevStage::Outcome.new(accepted: [], note: :jev_partial, model: 'jev/jev-1.13.0'),
+                              send_to_llm: %w[C2])
       prompts = []
+      allow(reviewer).to receive(:models).and_return('generate' => 'gemini/g1', 'critique' => 'gemini/c1')
       allow(reviewer).to receive(:critique) do |**prompt|
         prompts << prompt[:user_prompt]
         JSON.generate(verdicts: [{id: 'C2', decision: 'keep', reason: 'confirmed'}])
@@ -236,6 +241,7 @@ RSpec.describe Aireview::ReviewPipeline do
       expect(prompts.first).to include('"id": "C2"')
       expect(prompts.first).not_to include('"id": "C1"', '"id": "C3"')
       expect(result).to include('Jira requires discounts')
+      expect(result).to include('Models: generate — gemini/g1, critique — jev/jev-1.13.0 + gemini/c1.')
       expect(result).to include('those Jev could not judge were checked by the LLM critique')
     end
 
@@ -668,19 +674,19 @@ RSpec.describe Aireview::ReviewPipeline do
     expect(reviewer).to have_received(:exclude_answered_model).with(stage: 'generate', reason: /repair request does not fit/)
   end
 
-  it 'reports the fallback model used by a stage and lists reserves in dry-run output' do
+  it 'reports the model used by a stage and lists reserves in dry-run output' do
     allow(config).to receive(:fallback_names).with('generate').and_return(['gemini/g2'])
-    allow(config).to receive(:api_key_counts).with(['generate']).and_return('gemini' => 2)
+    allow(config).to receive(:api_key_counts).with(['generate']).and_return('gemini' => 1)
     allow(reviewer).to receive(:generate).and_return(generate_result([]))
-    allow(reviewer).to receive(:fallback_models).and_return('generate' => 'gemini/g2')
+    allow(reviewer).to receive(:models).and_return('generate' => 'gemini/g2')
 
     result = pipeline.run(merge_request: merge_request, changes: changes, critique: false)
     dry_run = pipeline.dry_run_prompts(merge_request: merge_request, changes: changes, critique: false)
 
-    expect(result).to include('Fallback model used: generate — gemini/g2.')
+    expect(result).to include('Models: generate — gemini/g2, critique — disabled.')
     expect(dry_run[:generate_fallbacks]).to eq(['gemini/g2'])
     expect(dry_run[:critique_fallbacks]).to eq([])
-    expect(dry_run[:api_keys]).to eq('gemini' => 2)
+    expect(dry_run[:api_keys]).to eq('gemini' => 1)
     expect(dry_run[:time_budget]).to eq(1_800)
     expect(dry_run[:overloaded_quarantine]).to eq(120)
   end
@@ -736,11 +742,13 @@ RSpec.describe Aireview::ReviewPipeline do
     log_output = StringIO.new
     pipeline = described_class.new(config: config, reviewer: reviewer, logger: Logger.new(log_output))
     allow(reviewer).to receive(:generate).and_return(generate_result([]))
+    allow(reviewer).to receive(:models).and_return('generate' => 'gemini/g1')
     allow(reviewer).to receive(:critique)
 
     result = pipeline.run(merge_request: merge_request, changes: changes)
 
     expect(result).to include("## Result\n\nok")
+    expect(result).to include('Models: generate — gemini/g1, critique — skipped (no candidates).')
     expect(reviewer).not_to have_received(:critique)
     expect(log_output.string).to include('Pipeline critique pass skipped: no candidates')
   end
